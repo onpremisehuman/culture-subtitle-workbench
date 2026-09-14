@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "문화자막 작업함",
+  "version": "0.8.0",
+  "description": "YouTube 영상을 문화역주 자막 작업함에 넣고 완성 자막을 원래 플레이어 위에서 봅니다.",
+  "permissions": ["activeTab", "storage", "notifications", "alarms", "downloads", "scripting"],
+  "host_permissions": [
+    "http://127.0.0.1:8876/*",
+    "http://localhost:8876/*",
+    "https://www.youtube.com/*"
+  ],
+  "action": {
+    "default_title": "문화자막",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon-16.png",
+      "32": "icon-32.png",
+      "48": "icon-48.png",
+      "128": "icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png"
+  },
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{
+    "matches": ["https://www.youtube.com/*"],
+    "js": ["content.js"],
+    "css": ["overlay.css"],
+    "run_at": "document_idle"
+  }],
+  "web_accessible_resources": [{
+    "resources": ["fonts/A2Z-Bold.ttf"],
+    "matches": ["https://www.youtube.com/*"]
+  }]
+}

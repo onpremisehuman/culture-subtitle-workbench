@@ -1,0 +1,12 @@
+{
+  "name": "문화자막 작업함",
+  "short_name": "문화자막",
+  "start_url": "/app/",
+  "display": "standalone",
+  "background_color": "#f3f6ff",
+  "theme_color": "#3770bf",
+  "icons": [
+    {"src": "/app/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "/app/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

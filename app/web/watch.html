@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090909">
+  <title>문화자막으로 보기</title>
+  <link rel="stylesheet" href="/app/styles.css">
+</head>
+<body class="watch-page">
+  <header class="topbar dark">
+    <a class="brand" href="/app/"><span class="brand-mark"><img src="/app/icon-192.png" alt=""></span><span>작업함</span></a>
+    <a class="youtube-link" id="youtube-link" target="_blank" rel="noreferrer">YouTube에서 열기</a>
+  </header>
+  <main class="watch-shell">
+    <section class="player-card">
+      <div class="player-wrap" id="player-wrap">
+        <div id="youtube-player"></div>
+        <div class="subtitle-layer" aria-live="off">
+          <div class="note-subtitle" id="note-subtitle"></div>
+          <div class="dialogue-subtitle" id="dialogue-subtitle"></div>
+        </div>
+      </div>
+      <div class="player-controls">
+        <button id="toggle-subtitles" class="control active" type="button">문화자막 켜짐</button>
+        <button id="font-down" class="control" type="button" aria-label="자막 작게">가−</button>
+        <button id="font-up" class="control" type="button" aria-label="자막 크게">가+</button>
+        <label class="control-select" for="subtitle-font">폰트
+          <select id="subtitle-font">
+            <option value="gothic">선명 고딕</option>
+            <option value="a2z">A2Z</option>
+            <option value="serif">명조</option>
+            <option value="mono">고정폭</option>
+          </select>
+        </label>
+        <button id="fullscreen" class="control" type="button">전체화면</button>
+      </div>
+    </section>
+    <section class="watch-info">
+      <p class="eyebrow">문화역주판</p>
+      <h1 id="video-title">영상 정보를 불러오는 중</h1>
+      <p id="watch-status">완성 자막을 확인하고 있습니다.</p>
+    </section>
+  </main>
+  <script src="/app/common.js"></script>
+  <script src="/app/watch.js"></script>
+  <script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>

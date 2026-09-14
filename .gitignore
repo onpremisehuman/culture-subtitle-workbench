@@ -1,0 +1,16 @@
+app/data/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.log
+*.sqlite3
+*.wav
+*.mp4
+*.mkv
+*.mov
+*.webm
+*.zip
+.env

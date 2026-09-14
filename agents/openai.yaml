@@ -1,0 +1,7 @@
+interface:
+  display_name: "문화자막 작업함"
+  short_description: "다국어 영상에 한국어 번역과 문화역주 자막 만들기"
+  icon_small: "./assets/icon-128.png"
+  icon_large: "./assets/icon-512.png"
+  brand_color: "#3770BF"
+  default_prompt: "Use $culture-subtitle-workbench to turn this video into readable Korean cultural subtitles."

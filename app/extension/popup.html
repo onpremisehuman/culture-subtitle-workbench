@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header><span><img src="icon-32.png" alt=""></span><strong>문화자막</strong></header>
+  <main>
+    <p class="label">현재 영상</p>
+    <h1 id="title">YouTube 영상을 열어주세요.</h1>
+    <section class="size-control" aria-labelledby="size-title">
+      <div class="size-heading"><strong id="size-title">자막 크기</strong><output id="size-value">100%</output></div>
+      <div class="size-buttons">
+        <button id="size-down" type="button" aria-label="자막 작게">−</button>
+        <button id="size-reset" type="button">기본</button>
+        <button id="size-up" type="button" aria-label="자막 크게">＋</button>
+      </div>
+      <label class="font-control" for="subtitle-font"><span>자막 폰트</span>
+        <select id="subtitle-font">
+          <option value="gothic">선명 고딕</option>
+          <option value="a2z">A2Z</option>
+          <option value="serif">명조</option>
+          <option value="mono">고정폭</option>
+        </select>
+      </label>
+    </section>
+    <div class="level-row">
+      <label><input type="radio" name="level" value="economy"> 경제형</label>
+      <label><input type="radio" name="level" value="culture" checked> 문화역주</label>
+      <label><input type="radio" name="level" value="curator"> 고인물판</label>
+    </div>
+    <label class="language-control" for="source-language">
+      <span>원문 언어</span>
+      <select id="source-language">
+        <option value="auto" selected>자동 감지</option>
+        <option value="tr">튀르키예어</option>
+        <option value="fa">페르시아어</option>
+        <option value="pt">포르투갈어(브라질 포함)</option>
+        <option value="es">스페인어</option>
+        <option value="ar">아랍어</option>
+        <option value="ja">일본어</option>
+        <option value="zh">중국어</option>
+        <option value="ru">러시아어</option>
+        <option value="en">영어</option>
+      </select>
+    </label>
+    <button id="queue" class="primary" type="button" disabled>문화자막 의뢰</button>
+    <p id="status" role="status"></p>
+    <button id="open-queue" class="quick-queue" type="button">내 작업함 열기</button>
+    <section class="playlist" aria-labelledby="playlist-title">
+      <div class="playlist-heading">
+        <p class="label">내 재생목록</p>
+        <button id="refresh-playlist" class="icon-button" type="button" aria-label="새로고침">↻</button>
+      </div>
+      <h2 id="playlist-title">완성된 문화자막</h2>
+      <label class="playlist-filter" for="playlist-filter"><span>재생목록</span><select id="playlist-filter"><option value="all">전체</option></select></label>
+      <div id="playlist-items"><p class="empty">불러오는 중…</p></div>
+    </section>
+  </main>
+  <footer>
+    <button id="open-local" type="button">로컬 영상 맡기기</button>
+  </footer>
+  <script src="popup.js"></script>
+</body>
+</html>

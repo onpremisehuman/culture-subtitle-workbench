@@ -1,0 +1,71 @@
+@font-face { font-family: "Culture A2Z"; src: url("fonts/A2Z-Bold.ttf") format("truetype"); font-weight: 700 950; font-display: swap; }
+.culture-subtitle-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  container-type: size;
+  font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+}
+.culture-subtitle-overlay[data-font="gothic"] { font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+.culture-subtitle-overlay[data-font="a2z"] { font-family: "Culture A2Z", "Malgun Gothic", sans-serif; }
+.culture-subtitle-overlay[data-font="serif"] { font-family: "Batang", "AppleMyungjo", serif; }
+.culture-subtitle-overlay[data-font="mono"] { font-family: "D2Coding", "GulimChe", "Consolas", monospace; }
+.culture-dialogue, .culture-note {
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  display: none;
+  width: fit-content;
+  max-width: min(86%, 23em);
+  margin: auto;
+  padding: .12em .34em;
+  border-radius: .15em;
+  text-align: center;
+  white-space: normal;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-break: strict;
+  text-wrap: balance;
+  font-weight: 900;
+  line-height: 1.32;
+  text-shadow: 0 2px 2px #000, 1px 1px 0 #000, -1px -1px 0 #000;
+}
+.culture-dialogue.visible, .culture-note.visible { display: block; }
+.culture-dialogue {
+  bottom: 8%;
+  color: #fff;
+  font-size: var(--culture-dialogue-size, clamp(12px, min(4.1cqw, 7.2cqh), 42px));
+  background: rgba(0,0,0,.26);
+}
+.culture-note {
+  top: 8%;
+  max-width: min(82%, 30em);
+  color: #ffe600;
+  font-size: var(--culture-note-size, clamp(10px, min(3cqw, 5.3cqh), 31px));
+  background: rgba(0,0,0,.74);
+}
+.culture-badge {
+  position: absolute;
+  top: clamp(5px, 1.2cqh, 14px);
+  right: clamp(5px, 1.2cqw, 14px);
+  min-height: clamp(23px, 4.4cqh, 32px);
+  padding: 0 clamp(7px, 1cqw, 11px);
+  color: #e5dfd5;
+  background: rgba(26,24,22,.84);
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 8px;
+  font: 800 clamp(9px, min(1.25cqw, 2.2cqh), 13px)/1 "Malgun Gothic", sans-serif;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.culture-badge.ready { color: #fff; background: #d8582b; border-color: #f18a64; }
+.culture-badge.off { color: #bdb8b0; background: rgba(26,24,22,.78); }
+.ytp-autohide .culture-badge:not(:focus) { opacity: .18; transition: opacity .2s; }
+.culture-badge:hover { opacity: 1 !important; }
+
+@container (max-width: 360px) {
+  .culture-dialogue { bottom: 11%; max-width: 92%; }
+  .culture-note { top: 6%; max-width: 90%; }
+  .culture-badge { border-radius: 5px; }
+}

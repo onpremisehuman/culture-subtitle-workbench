@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#3770bf">
+  <title>문화자막 작업함</title>
+  <link rel="manifest" href="/app/manifest.webmanifest">
+  <link rel="stylesheet" href="/app/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/app/" aria-label="문화자막 작업함">
+      <span class="brand-mark"><img src="/app/icon-192.png" alt=""></span>
+      <span>문화자막 작업함</span>
+    </a>
+    <div class="top-actions">
+      <button class="notify-button" id="notify-button" type="button">완료 알림</button>
+      <div class="connection" id="connection"><span></span> 연결 확인 중</div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="request-panel" aria-labelledby="request-title">
+      <div>
+        <p class="eyebrow">새 자막 의뢰</p>
+        <h1 id="request-title">영상 원본 선택</h1>
+        <p class="intro">YouTube 영상은 원래 화면에, 로컬 영상은 작업실 플레이어에 문화역주 자막을 얹습니다.</p>
+      </div>
+      <form id="request-form">
+        <div class="source-tabs" role="tablist" aria-label="영상 원본">
+          <button class="source-tab active" type="button" role="tab" aria-selected="true" data-source="youtube">YouTube</button>
+          <button class="source-tab" type="button" role="tab" aria-selected="false" data-source="local">내 컴퓨터</button>
+        </div>
+        <div class="source-pane" id="youtube-source">
+          <label for="video-url">YouTube 주소</label>
+          <div class="url-row">
+            <input id="video-url" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://www.youtube.com/watch?v=…" required>
+            <button class="primary" type="submit">작업함에 넣기</button>
+          </div>
+        </div>
+        <div class="source-pane" id="local-source" hidden>
+          <label for="video-file">로컬 영상 파일</label>
+          <div class="file-row">
+            <label class="file-picker" for="video-file"><strong>영상 선택</strong><span id="file-name">MP4·MOV·WebM·MKV·AVI</span></label>
+            <input id="video-file" type="file" accept="video/*,.mkv,.avi,.wmv">
+            <button class="primary" type="submit">작업함에 올리기</button>
+          </div>
+          <p class="upload-note">파일은 이 PC의 작업 폴더에만 저장됩니다. 업로드 창을 닫지 마세요.</p>
+        </div>
+        <div class="language-row">
+          <label for="source-language">원문 언어</label>
+          <select id="source-language" name="language">
+            <option value="auto" selected>자동 감지</option>
+            <option value="tr">튀르키예어</option>
+            <option value="fa">페르시아어</option>
+            <option value="pt">포르투갈어(브라질 포함)</option>
+            <option value="es">스페인어</option>
+            <option value="ar">아랍어</option>
+            <option value="ja">일본어</option>
+            <option value="zh">중국어</option>
+            <option value="ru">러시아어</option>
+            <option value="fr">프랑스어</option>
+            <option value="de">독일어</option>
+            <option value="it">이탈리아어</option>
+            <option value="hi">힌디어</option>
+            <option value="id">인도네시아어</option>
+            <option value="vi">베트남어</option>
+            <option value="th">태국어</option>
+            <option value="en">영어</option>
+          </select>
+          <span>모르면 자동 감지 그대로 두세요.</span>
+        </div>
+        <fieldset>
+          <legend>자막 농도</legend>
+          <div class="level-grid">
+            <label class="level-option">
+              <input type="radio" name="level" value="economy">
+              <span><strong>경제형</strong><small>자연스러운 번역과 필수 설명만</small></span>
+            </label>
+            <label class="level-option selected">
+              <input type="radio" name="level" value="culture" checked>
+              <span><strong>문화역주</strong><small>이번 버거 영상과 같은 균형</small></span>
+            </label>
+            <label class="level-option">
+              <input type="radio" name="level" value="curator">
+              <span><strong>고인물판</strong><small>시대·지역·밈까지 깊게</small></span>
+            </label>
+          </div>
+        </fieldset>
+        <p class="form-message" id="form-message" role="status"></p>
+      </form>
+    </section>
+
+    <section class="queue-section" aria-labelledby="queue-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">내 작업함</p>
+          <h2 id="queue-title">맡겨둔 영상</h2>
+        </div>
+        <button class="quiet" id="refresh-button" type="button">새로고침</button>
+      </div>
+      <div class="library-tabs" id="library-tabs" role="tablist" aria-label="재생목록"></div>
+      <div class="job-list" id="job-list" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <dialog id="pair-dialog">
+    <form method="dialog" id="pair-form">
+      <p class="eyebrow">모바일 페어링</p>
+      <h2>PC에 표시된 토큰을 입력하세요.</h2>
+      <p>같은 와이파이에 연결된 기기만 사용하세요.</p>
+      <input id="pair-token" autocomplete="off" placeholder="페어링 토큰">
+      <div class="dialog-actions">
+        <button class="quiet" value="cancel">취소</button>
+        <button class="primary" value="default">연결</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="playlist-dialog" aria-labelledby="playlist-dialog-title">
+    <form method="dialog" id="playlist-form">
+      <p class="eyebrow">재생목록 정리</p>
+      <h2 id="playlist-dialog-title">어느 재생목록으로 옮길까요?</h2>
+      <p class="delete-job-title" id="playlist-job-title"></p>
+      <label for="playlist-name">재생목록 이름</label>
+      <input id="playlist-name" list="playlist-names" maxlength="40" autocomplete="off" required>
+      <datalist id="playlist-names"></datalist>
+      <p class="dialog-message" id="playlist-dialog-message" role="status"></p>
+      <div class="dialog-actions">
+        <button class="quiet" value="cancel" type="button" id="playlist-cancel">취소</button>
+        <button class="primary" value="default" type="submit" id="playlist-confirm">옮기기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="delete-dialog" aria-labelledby="delete-dialog-title">
+    <form method="dialog" id="delete-form">
+      <p class="eyebrow danger-eyebrow">작업 삭제</p>
+      <h2 id="delete-dialog-title">이 작업을 삭제할까요?</h2>
+      <p class="delete-job-title" id="delete-job-title"></p>
+      <p>작업함 목록과 저장된 자막·내보내기 파일이 함께 삭제되며, 작업함에서 복구할 수 없습니다.</p>
+      <p class="dialog-message" id="delete-dialog-message" role="status"></p>
+      <div class="dialog-actions">
+        <button class="quiet" value="cancel" type="button" id="delete-cancel">취소</button>
+        <button class="danger-button" value="default" type="submit" id="delete-confirm">삭제</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app/common.js"></script>
+  <script src="/app/app.js"></script>
+</body>
+</html>
