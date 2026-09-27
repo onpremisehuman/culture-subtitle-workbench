@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "문화자막 작업함",
-  "version": "0.8.2",
+  "version": "0.10.0",
   "description": "YouTube 영상을 문화역주 자막 작업함에 넣고 완성 자막을 원래 플레이어 위에서 봅니다.",
   "permissions": ["activeTab", "storage", "notifications", "alarms", "downloads", "scripting"],
   "host_permissions": [

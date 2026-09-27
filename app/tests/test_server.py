@@ -342,14 +342,15 @@ class ChunkedTranslationTests(unittest.TestCase):
     def test_translation_merges_chunks_into_one_srt(self):
         cues = make_cues(5)
 
-        def fake_chunk(job_dir, level, prompt, chunk, part):
+        def fake_chunk(job_dir, level, prompt, chunk, part, backend):
+            self.assertEqual(backend, "claude")
             return {cue["id"]: f"번역{cue['id']}" for cue in chunk}, [{"cue_id": chunk[0]["id"], "text": "주"}]
 
         with tempfile.TemporaryDirectory() as tmp, \
                 patch.object(server_module, "TRANSLATION_CHUNK_SIZE", 2), \
                 patch.object(server_module, "chunk_cues", lambda c: [c[0:2], c[2:4], c[4:]]), \
                 patch.object(server_module, "translate_chunk_with_codex", side_effect=fake_chunk), \
-                patch.object(server_module, "resolve_tool_command", return_value=["codex"]), \
+                patch.object(server_module.agent_cli, "resolve_backend", return_value="claude"), \
                 patch.object(server_module, "update_job"):
             job_dir = Path(tmp)
             server_module.translate_aligned_with_codex("j", job_dir, "t", "culture", cues, "en")

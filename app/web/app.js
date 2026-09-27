@@ -35,6 +35,36 @@ let pendingDeleteJob = null;
 let pendingPlaylistJob = null;
 let serverConnected = false;
 
+const aiDialog = document.querySelector("#ai-settings-dialog");
+const aiSelect = document.querySelector("#ai-backend");
+const aiStatus = document.querySelector("#ai-settings-status");
+const aiSave = document.querySelector("#ai-settings-save");
+function renderAiSettings(info) {
+  aiSelect.replaceChildren(new Option("자동 (설치된 AI 우선)", "auto"));
+  for (const item of info.backends) {
+    aiSelect.add(new Option(`${item.label}${item.installed ? " · 설치됨" : " · 미설치"}`, item.id));
+  }
+  aiSelect.value = info.selected;
+  aiSelect.disabled = info.forced_by_env;
+  aiSave.disabled = info.forced_by_env;
+  const effective = info.backends.find(item => item.id === info.effective)?.label;
+  aiStatus.textContent = info.error || `${info.forced_by_env ? "서버 환경변수로 고정됨 · " : ""}현재 선택: ${effective}. 다음 번역부터 적용되며 진행 중인 번역은 유지됩니다.`;
+}
+document.querySelector("#ai-settings-button").addEventListener("click", async () => {
+  aiDialog.showModal();
+  aiStatus.textContent = "서버의 AI 설정을 확인하는 중…";
+  aiSave.disabled = true;
+  try { renderAiSettings(await CultureAPI.request("/api/ai-settings")); }
+  catch (error) { aiStatus.textContent = error.message; }
+});
+document.querySelector("#ai-settings-close").addEventListener("click", () => aiDialog.close());
+aiSave.addEventListener("click", async () => {
+  aiSave.disabled = true;
+  try {
+    renderAiSettings(await CultureAPI.request("/api/ai-settings", {method: "POST", body: JSON.stringify({backend: aiSelect.value})}));
+  } catch (error) { aiStatus.textContent = error.message; aiSave.disabled = false; }
+});
+
 document.querySelectorAll(".level-option input").forEach(input => {
   input.addEventListener("change", () => {
     document.querySelectorAll(".level-option").forEach(label => label.classList.toggle("selected", label.contains(input)));

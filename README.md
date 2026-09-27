@@ -2,7 +2,7 @@
 
 모르는 언어의 영상을 한국어로 번역하고, 대사만 번역해서는 이해하기 어려운 시대·지역·계층·밈·말장난에 `※ 역주`를 붙여 나중에 편하게 감상하는 로컬 작업함입니다.
 
-YouTube 또는 내 컴퓨터의 영상을 큐에 넣으면 로컬 Whisper가 타임코드를 잡고, 로그인된 Codex CLI가 번역과 문화주석을 작성합니다. 완성된 자막은 원래 YouTube 플레이어 위에 띄우거나 작업함의 로컬 플레이어에서 볼 수 있습니다.
+YouTube 또는 내 컴퓨터의 영상을 큐에 넣으면 로컬 Whisper가 타임코드를 잡고, 선택한 Codex·Claude Code·Antigravity CLI가 번역과 문화주석을 작성합니다. 완성된 자막은 원래 YouTube 플레이어 위에 띄우거나 작업함의 로컬 플레이어에서 볼 수 있습니다.
 
 > This is a local-first Korean cultural-subtitle workbench and Codex skill. The interface is currently Korean; transcription supports multiple source languages.
 
@@ -24,7 +24,7 @@ YouTube 또는 내 컴퓨터의 영상을 큐에 넣으면 로컬 Whisper가 타
 - Python 3.10 이상
 - FFmpeg
 - Chrome 또는 Edge
-- 로그인된 [Codex CLI](https://github.com/openai/codex)
+- 로그인된 Codex CLI, Claude Code, Antigravity 중 하나 (Gemini CLI는 기존 환경용 선택지)
 
 Python 패키지 `openai-whisper`와 `yt-dlp`는 설치 스크립트가 설치합니다. 첫 Whisper 실행에서는 선택한 모델을 내려받으므로 시간이 걸리고 저장공간이 필요합니다. 기본 모델은 `large-v3-turbo`입니다.
 
@@ -63,17 +63,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
 ## 사용량과 개인정보
 
 - Whisper 음성 인식은 로컬에서 실행됩니다.
-- 번역에는 이 PC에 로그인된 Codex CLI 세션이 사용됩니다. 확장 프로그램에 API 키를 넣지 않습니다.
+- 번역에는 서버 PC에 로그인된 AI CLI 세션이 사용됩니다. 작업함 상단 **AI 선택**에서 변경합니다. 확장 프로그램에 API 키를 넣지 않습니다. 원문 전사 텍스트는 선택한 AI 서비스로 전송됩니다.
 - 영상별 데이터는 `app/data/`에만 저장되며 Git에서 제외됩니다.
 - 전사용 `source_audio.wav`는 작업 성공·실패 여부와 관계없이 처리 뒤 자동 삭제됩니다.
-- 사용자의 Codex 플랜, 모델 접근 권한과 사용 한도에 따라 작업 가능량이 달라질 수 있습니다.
+- 선택한 서비스의 플랜, 모델 접근 권한과 사용 한도에 따라 작업 가능량이 달라집니다. 무제한·무료 이용을 보장하지 않습니다.
 
-## 구조: 번역 백엔드를 Codex 구독에서 빌려 씀
+## 구조: 사용 중인 AI CLI를 번역 백엔드로 사용
 
-이 작업함은 별도 번역 서버나 API 키를 두지 않고, 사용자가 이미 로그인해 둔 Codex CLI를 `codex exec`로 불러 번역합니다. 그래서 Codex를 쓰지 않는 사람에게는 번역 단계가 동작하지 않습니다.
+이 작업함은 별도 번역 서버나 내장 API 키 없이 `agent_cli.py` 공용 어댑터를 통해 선택한 CLI를 실행합니다. Codex가 없어도 다른 지원 CLI를 설치·로그인하여 선택할 수 있습니다. 자동 선택은 설치 순서(Codex → Claude → Antigravity → Gemini)만 확인하며 로그인·사용량을 확인하지 않습니다. 실패 후 다른 서비스로 자동 전환하지 않습니다. 진행 중인 번역의 AI는 고정됩니다.
 
-- 장점: 추가 과금·키 관리가 없고, 비밀키가 코드나 확장에 들어갈 일이 없습니다. 모델 교체도 `CULTURE_SUB_MODEL` 한 줄이면 됩니다.
-- 한계: Codex CLI는 번역 API가 아니라 에이전트라서 호출마다 에이전트 준비 비용이 붙고, CLI 업데이트·로그인 만료·사용 한도에 따라 동작이 달라질 수 있습니다. 이를 줄이려고 원문을 프롬프트에 직접 넣어 파일 접근 없이 답하게 하고, 결과를 구간별로 검수·재시도합니다.
+- 장점: 앱 전용 API 키나 번역 백엔드 운영이 필요 없습니다. Codex 모델은 `CULTURE_SUB_MODEL`로 지정하며 다른 CLI는 해당 CLI의 기본 모델을 사용합니다.
+- 한계: CLI는 번역 API가 아니라 에이전트라서 호출마다 준비 비용이 붙고, CLI 업데이트·로그인 만료·사용 한도에 따라 동작이 달라질 수 있습니다. 원문을 UTF-8 프롬프트에 직접 넣고 JSON 결과를 구간별로 검수·재시도합니다.
 - 전사(Whisper)와 다운로드(yt-dlp)는 Codex와 무관하게 로컬에서 동작합니다.
 
 ## 권리와 책임
@@ -91,6 +91,8 @@ python -m unittest discover -s app/tests -v
 
 - `CULTURE_WHISPER_MODEL`: Whisper 모델 변경
 - `CULTURE_SUB_MODEL`: 세 자막 농도에서 사용할 Codex 모델 강제 지정
+- `AGENT_CLI_BACKEND`: 화면 설정 대신 사용할 CLI 강제 지정 (`auto`, `codex`, `claude`, `antigravity`, `gemini`)
+- AI 선택은 `app/data/ai-settings.json`에 보관합니다. 공개 저장소에는 포함하지 않습니다.
 - `CULTURE_TRANSLATION_CHUNK`: 한 번에 번역할 발화 수(기본 200)
 - `CULTURE_TRANSLATION_PARALLEL`: 동시에 번역할 구간 수(기본 2)
 - `CULTURE_TRUST_TAILSCALE=1`: `--lan` 모드에서 Tailscale 노드(100.64.0.0/10)에 페어링 토큰 자동 발급. 기본값은 이 PC에서만 자동 발급

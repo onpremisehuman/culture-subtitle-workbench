@@ -1,6 +1,6 @@
 ---
 name: culture-subtitle-workbench
-description: Build, install, run, and troubleshoot a local cultural-subtitle queue for YouTube or user-provided videos, using Whisper for timed transcription and Codex for Korean translation and cultural notes. Use when the user asks to queue a video, create 문화역주 자막, watch completed subtitles in YouTube, or manage this workbench. Do not use as a general-purpose media downloader.
+description: Build, install, run, and troubleshoot a local cultural-subtitle queue for YouTube or user-provided videos, using Whisper for timed transcription and a selected AI CLI for Korean translation and cultural notes. Use for 문화역주 자막 and workbench management, not as a general-purpose media downloader.
 ---
 
 # Culture Subtitle Workbench
@@ -24,7 +24,7 @@ The implementation lives in `app/`; helper scripts live in `scripts/`.
 3. Run `scripts/start.ps1` to start the server without a persistent console and open `http://127.0.0.1:8876/app/`.
 4. Load `app/extension` as an unpacked Chrome or Edge extension when the user wants subtitles over the original YouTube player.
 
-If Codex CLI is not logged in, ask the user to run `codex login`; never request or store their account password. The workbench uses the installed Codex CLI session, not an API key embedded in the extension.
+Use **AI 선택** in the workbench to choose Codex, Claude Code or Antigravity (legacy Gemini is also selectable). Auto checks installation only, not login or remaining quota. If the selected CLI needs login, ask the user to sign in through that CLI; never request or store passwords. The workbench uses the selected CLI account, not an embedded API key. Transcript text is sent to that provider; audio transcription stays local. Backend choice is frozen for each translation job and errors never silently switch providers.
 
 ## Operating workflow
 
@@ -40,7 +40,7 @@ If Codex CLI is not logged in, ask the user to run `codex login`; never request 
 - If the extension reports `Could not establish connection`, start the local server and reload the YouTube tab.
 - If the manifest cannot be loaded, verify that the selected directory is exactly `app/extension` and contains `manifest.json`.
 - If transcription fails, run `scripts/doctor.ps1`, verify ffmpeg/Whisper availability, and inspect `app/data/logs/autostart-server-error.log` without exposing its contents publicly.
-- If translation fails, check `codex login status` and the user's Codex usage availability. Do not silently switch to an API key.
+- If translation fails, inspect the selected CLI's login and quota. For Codex use `codex login status`. Do not silently switch to another provider or API key. `AGENT_CLI_BACKEND` overrides the saved UI choice; `CULTURE_SUB_MODEL` applies to Codex only.
 - Translation embeds the source cues in the prompt and runs in chunks (`CULTURE_TRANSLATION_CHUNK`, default 200). Per-chunk outputs live in `app/data/jobs/<id>/aligned_translation.partNN.json`; a chunk that returns empty or placeholder text is retried once, then the job fails naming the chunk range. Retrying a job that failed during translation reuses its `aligned_source.json` and skips download and Whisper.
 - yt-dlp `HTTP Error 403` is usually transient and is retried automatically. If it persists, update yt-dlp and make sure Node or deno is installed as the JS runtime.
 - In `--lan` mode, Tailscale nodes receive the pairing token automatically only when `CULTURE_TRUST_TAILSCALE=1`; otherwise only this PC does.

@@ -16,6 +16,7 @@
     </a>
     <div class="top-actions">
       <button class="notify-button" id="notify-button" type="button">완료 알림</button>
+      <button class="notify-button" id="ai-settings-button" type="button">AI 선택</button>
       <button class="connection" id="connection" type="button" aria-haspopup="dialog"><span></span> 연결 확인 중</button>
     </div>
   </header>
@@ -119,6 +120,15 @@
     </section>
   </main>
 
+  <dialog id="ai-settings-dialog" aria-labelledby="ai-settings-title">
+    <h2 id="ai-settings-title">번역에 사용할 AI</h2>
+    <p>서버 PC에 설치·로그인된 CLI를 사용합니다. 별도 API 키 없이 선택한 계정의 사용량을 씁니다.</p>
+    <label for="ai-backend">AI 선택</label>
+    <select id="ai-backend"></select>
+    <p>자동은 설치된 순서로 선택합니다. 로그인·잔여 사용량까지 확인하는 기능은 아닙니다. 전사문은 선택한 AI 서비스에 전달됩니다.</p>
+    <p id="ai-settings-status" role="status"></p>
+    <div class="dialog-actions"><button class="quiet" id="ai-settings-close" type="button">닫기</button><button class="primary" id="ai-settings-save" type="button">저장</button></div>
+  </dialog>
   <dialog id="pair-dialog">
     <form method="dialog" id="pair-form">
       <p class="eyebrow">모바일 페어링</p>

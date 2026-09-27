@@ -23,6 +23,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
+import agent_cli
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,6 +32,7 @@ JOBS_DIR = DATA_DIR / "jobs"
 DB_PATH = DATA_DIR / "queue.sqlite3"
 TOKEN_PATH = DATA_DIR / "access_token.txt"
 STATIC_DIR = ROOT / "web"
+AI_SETTINGS = agent_cli.BackendSettings(DATA_DIR / "ai-settings.json")
 DEMO_VIDEO_ID = "7ifpw18OCwg"
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 LOCAL_VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".mpeg", ".mpg"}
@@ -994,7 +996,7 @@ def parse_chunk_translation(result: dict, chunk: list[dict]) -> tuple[dict[int, 
 
 
 def translate_chunk_with_codex(
-    job_dir: Path, level: str, prompt: str, chunk: list[dict], part: int
+    job_dir: Path, level: str, prompt: str, chunk: list[dict], part: int, backend: str = "codex"
 ) -> tuple[dict[int, str], list[dict]]:
     schema_path = job_dir / f"aligned.part{part:02d}.schema.json"
     result_path = job_dir / f"aligned_translation.part{part:02d}.json"
@@ -1004,21 +1006,12 @@ def translate_chunk_with_codex(
     for attempt in range(1, TRANSLATION_ATTEMPTS + 1):
         result_path.unlink(missing_ok=True)
         try:
-            run_process(
-                [
-                    "codex", "exec", "-", "--model", os.getenv("CULTURE_SUB_MODEL", LEVELS[level]["model"]),
-                    "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
-                    "--output-schema", str(schema_path), "--output-last-message", str(result_path),
-                    "--cd", str(job_dir),
-                ],
-                job_dir,
-                stdin=prompt,
+            result = agent_cli.run_json(
+                prompt, translation_schema(len(chunk)), backend=backend,
+                model=os.getenv("CULTURE_SUB_MODEL", LEVELS[level]["model"]) if backend == "codex" else None,
                 timeout=1800,
             )
-            try:
-                result = json.loads(result_path.read_text(encoding="utf-8-sig"))
-            except (OSError, json.JSONDecodeError) as exc:
-                raise ValueError("AI 결과를 JSON으로 읽지 못했습니다.") from exc
+            result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
             return parse_chunk_translation(result, chunk)
         except (ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
             last_error = exc
@@ -1032,15 +1025,15 @@ def translate_chunk_with_codex(
 def translate_aligned_with_codex(
     job_id: str, job_dir: Path, title: str, level: str, cues: list[dict], source_language: str = ""
 ) -> None:
-    if not resolve_tool_command("codex"):
-        raise RuntimeError("Codex CLI를 찾을 수 없습니다. 설치 또는 PATH 설정이 필요합니다.")
+    backend = agent_cli.resolve_backend(AI_SETTINGS.load()["backend"])
+    (job_dir / "ai-backend.json").write_text(json.dumps({"backend": backend}), encoding="utf-8")
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     for stale in job_dir.glob("aligned_translation.part*.json"):
         stale.unlink(missing_ok=True)
     chunks = chunk_cues(cues)
     parts = len(chunks)
-    label = LEVELS[level]["label"]
+    label = f"{LEVELS[level]['label']} · {agent_cli.BACKENDS[backend].label}"
     update_job(job_id, stage=f"{label} 번역 중 (0/{parts})", progress=60)
     prompts = []
     for index, chunk in enumerate(chunks):
@@ -1053,7 +1046,7 @@ def translate_aligned_with_codex(
     done = 0
     with ThreadPoolExecutor(max_workers=min(TRANSLATION_PARALLEL, parts)) as pool:
         futures = {
-            pool.submit(translate_chunk_with_codex, job_dir, level, prompt, chunk, index + 1): index
+            pool.submit(translate_chunk_with_codex, job_dir, level, prompt, chunk, index + 1, backend): index
             for index, (prompt, chunk) in enumerate(zip(prompts, chunks))
         }
         for future in as_completed(futures):
@@ -1529,6 +1522,9 @@ class AppHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/jobs":
             self.send_json({"jobs": list_jobs()})
             return
+        if parsed.path == "/api/ai-settings":
+            self.send_json(agent_cli.describe(AI_SETTINGS.load()["backend"]))
+            return
         if parsed.path == "/api/playlists":
             self.send_json({"playlists": list_playlists()})
             return
@@ -1580,6 +1576,16 @@ class AppHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/") or not self.authorized():
             self.send_json({"error": "페어링 토큰이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+            return
+        if parsed.path == "/api/ai-settings":
+            try:
+                payload = self.read_json()
+                if not isinstance(payload, dict) or not isinstance(payload.get("backend"), str):
+                    raise ValueError("AI를 선택하세요.")
+                saved = AI_SETTINGS.save(payload["backend"])
+                self.send_json(agent_cli.describe(saved["backend"]))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         if parsed.path == "/api/jobs":
             try:

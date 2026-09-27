@@ -1,4 +1,4 @@
-const CACHE = "culture-subtitle-shell-v24";
+const CACHE = "culture-subtitle-shell-v25";
 const SHELL = ["/app/", "/app/styles.css", "/app/common.js", "/app/app.js", "/app/watch.html", "/app/watch.js", "/app/icon-192.png", "/app/icon-512.png", "/app/fonts/A2Z-Regular.ttf", "/app/fonts/A2Z-Medium.ttf", "/app/fonts/A2Z-Bold.ttf"];
 self.addEventListener("install", event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL))));
 self.addEventListener("activate", event => event.waitUntil(
