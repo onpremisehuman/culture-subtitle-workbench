@@ -41,6 +41,9 @@ If Codex CLI is not logged in, ask the user to run `codex login`; never request 
 - If the manifest cannot be loaded, verify that the selected directory is exactly `app/extension` and contains `manifest.json`.
 - If transcription fails, run `scripts/doctor.ps1`, verify ffmpeg/Whisper availability, and inspect `app/data/logs/autostart-server-error.log` without exposing its contents publicly.
 - If translation fails, check `codex login status` and the user's Codex usage availability. Do not silently switch to an API key.
+- Translation embeds the source cues in the prompt and runs in chunks (`CULTURE_TRANSLATION_CHUNK`, default 200). Per-chunk outputs live in `app/data/jobs/<id>/aligned_translation.partNN.json`; a chunk that returns empty or placeholder text is retried once, then the job fails naming the chunk range. Retrying a job that failed during translation reuses its `aligned_source.json` and skips download and Whisper.
+- yt-dlp `HTTP Error 403` is usually transient and is retried automatically. If it persists, update yt-dlp and make sure Node or deno is installed as the JS runtime.
+- In `--lan` mode, Tailscale nodes receive the pairing token automatically only when `CULTURE_TRUST_TAILSCALE=1`; otherwise only this PC does.
 - Keep the server bound to `127.0.0.1` unless the user explicitly requests LAN access. LAN mode exposes a pairing token and should be limited to a trusted network.
 
 ## Validation after changes

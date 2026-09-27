@@ -5,6 +5,7 @@ from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 import json
+from ipaddress import ip_address, ip_network
 import mimetypes
 import os
 import re
@@ -34,6 +35,7 @@ DEMO_VIDEO_ID = "7ifpw18OCwg"
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 LOCAL_VIDEO_SUFFIXES = {".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi", ".wmv", ".mpeg", ".mpg"}
 MAX_UPLOAD_BYTES = int(os.getenv("CULTURE_MAX_UPLOAD_BYTES", str(20 * 1024 * 1024 * 1024)))
+TAILSCALE_NETWORK = ip_network("100.64.0.0/10")
 
 LEVELS = {
     "economy": {"label": "경제형", "model": "gpt-5.6-luna"},
@@ -52,6 +54,7 @@ SOURCE_LANGUAGES = {
     "ja": "일본어",
     "zh": "중국어",
     "ru": "러시아어",
+    "pl": "폴란드어",
     "fr": "프랑스어",
     "de": "독일어",
     "it": "이탈리아어",
@@ -69,6 +72,21 @@ MEDIA_TICKETS: dict[str, tuple[Path, float, str, str]] = {}
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def is_trusted_pairing_client(value: str, trust_tailscale: bool | None = None) -> bool:
+    """Allow automatic pairing from this host, and from Tailscale nodes only when opted in."""
+    if trust_tailscale is None:
+        trust_tailscale = os.getenv("CULTURE_TRUST_TAILSCALE", "") == "1"
+    try:
+        address = ip_address(value)
+    except ValueError:
+        return False
+    if getattr(address, "ipv4_mapped", None):
+        address = address.ipv4_mapped
+    if address.is_loopback:
+        return True
+    return trust_tailscale and address.version == 4 and address in TAILSCALE_NETWORK
 
 
 def extract_video_id(value: str) -> str:
@@ -134,6 +152,24 @@ def init_storage() -> str:
         for name, statement in migrations.items():
             if name not in columns:
                 conn.execute(statement)
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS playlists (
+                name TEXT PRIMARY KEY COLLATE NOCASE,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        now = utc_now()
+        conn.execute(
+            "INSERT OR IGNORE INTO playlists (name, created_at) VALUES (?, ?)",
+            ("기본 재생목록", now),
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO playlists (name, created_at)
+               SELECT DISTINCT playlist, ? FROM jobs WHERE TRIM(playlist) <> ''""",
+            (now,),
+        )
     seed_demo()
     return TOKEN_PATH.read_text(encoding="utf-8").strip()
 
@@ -194,6 +230,48 @@ def list_jobs() -> list[dict]:
     return [row_to_dict(row) for row in rows]
 
 
+def normalize_playlist_name(value: object) -> str:
+    playlist = re.sub(r"\s+", " ", str(value)).strip()
+    if not playlist:
+        raise ValueError("재생목록 이름을 입력하세요.")
+    if len(playlist) > 40:
+        raise ValueError("재생목록 이름은 40자 이내로 입력하세요.")
+    return playlist
+
+
+def list_playlists() -> list[str]:
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT name FROM playlists ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, name COLLATE NOCASE",
+            ("기본 재생목록",),
+        ).fetchall()
+    return [str(row["name"]) for row in rows]
+
+
+def create_playlist(value: object) -> str:
+    playlist = normalize_playlist_name(value)
+    try:
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO playlists (name, created_at) VALUES (?, ?)",
+                (playlist, utc_now()),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("이미 같은 이름의 재생목록이 있습니다.") from exc
+    return playlist
+
+
+def register_playlist(playlist: str, conn: sqlite3.Connection | None = None) -> None:
+    if conn is not None:
+        conn.execute(
+            "INSERT OR IGNORE INTO playlists (name, created_at) VALUES (?, ?)",
+            (playlist, utc_now()),
+        )
+        return
+    with db() as own_conn:
+        register_playlist(playlist, own_conn)
+
+
 def update_job(job_id: str, **values: object) -> None:
     values["updated_at"] = utc_now()
     columns = ", ".join(f"{key} = ?" for key in values)
@@ -215,16 +293,44 @@ def organize_job(job_id: str, payload: dict) -> dict:
             raise ValueError("숨김 값이 올바르지 않습니다.")
         values["hidden"] = int(payload["hidden"])
     if "playlist" in payload:
-        playlist = re.sub(r"\s+", " ", str(payload["playlist"])).strip()
-        if not playlist:
-            raise ValueError("재생목록 이름을 입력하세요.")
-        if len(playlist) > 40:
-            raise ValueError("재생목록 이름은 40자 이내로 입력하세요.")
+        playlist = normalize_playlist_name(payload["playlist"])
         values["playlist"] = playlist
     if not values:
         raise ValueError("변경할 항목이 없습니다.")
+    if "playlist" in values:
+        register_playlist(str(values["playlist"]))
     update_job(job_id, **values)
     return get_job(job_id)  # type: ignore[return-value]
+
+
+def organize_jobs(job_ids: list[str], payload: dict) -> list[dict]:
+    """Move multiple existing jobs to one playlist in a single transaction."""
+    if not isinstance(job_ids, list) or not job_ids:
+        raise ValueError("옮길 작업을 하나 이상 선택하세요.")
+    unique_ids = list(dict.fromkeys(str(job_id) for job_id in job_ids))
+    if len(unique_ids) > 100:
+        raise ValueError("한 번에 최대 100개까지 옮길 수 있습니다.")
+    if any(not re.fullmatch(r"[A-Za-z0-9_-]+", job_id) for job_id in unique_ids):
+        raise ValueError("작업 ID가 올바르지 않습니다.")
+
+    playlist = normalize_playlist_name(payload.get("playlist", ""))
+
+    placeholders = ", ".join("?" for _ in unique_ids)
+    now = utc_now()
+    with db() as conn:
+        rows = conn.execute(
+            f"SELECT id FROM jobs WHERE id IN ({placeholders})", unique_ids
+        ).fetchall()
+        found = {row["id"] for row in rows}
+        missing = [job_id for job_id in unique_ids if job_id not in found]
+        if missing:
+            raise FileNotFoundError("선택한 작업 중 찾을 수 없는 항목이 있습니다.")
+        register_playlist(playlist, conn)
+        conn.execute(
+            f"UPDATE jobs SET playlist = ?, updated_at = ? WHERE id IN ({placeholders})",
+            (playlist, now, *unique_ids),
+        )
+    return [get_job(job_id) for job_id in unique_ids]  # type: ignore[misc]
 
 
 def delete_job(job_id: str) -> dict:
@@ -300,6 +406,7 @@ def normalize_language_hint(value: object) -> str:
         "fas": "fa",
         "per": "fa",
         "jpn": "ja",
+        "pol": "pl",
         "zho": "zh",
         "chi": "zh",
     }
@@ -467,7 +574,36 @@ def seed_demo() -> None:
         )
 
 
+def resolve_tool_command(name: str, platform_name: str | None = None) -> list[str]:
+    """Resolve shell shims to something subprocess can launch without a shell."""
+    platform_name = platform_name or os.name
+    candidates = [name]
+    if platform_name == "nt" and not Path(name).suffix:
+        # PowerShell resolves .ps1 before .cmd on this machine, while CreateProcess
+        # cannot execute a .ps1 shim directly. Prefer Windows-native launchers.
+        candidates = [f"{name}.cmd", f"{name}.exe", f"{name}.bat", name]
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if not resolved:
+            continue
+        if platform_name == "nt" and Path(resolved).suffix.lower() == ".ps1":
+            powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+            if powershell:
+                return [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", resolved]
+            continue
+        return [resolved]
+    return []
+
+
 def run_process(args: list[str], cwd: Path, stdin: str | None = None, timeout: int = 1800) -> str:
+    if not args:
+        raise ValueError("실행할 명령이 없습니다.")
+    executable = args[0]
+    if not Path(executable).is_absolute() and not any(separator in executable for separator in ("/", "\\")):
+        resolved = resolve_tool_command(executable)
+        if not resolved:
+            raise RuntimeError(f"필수 실행 파일을 찾을 수 없습니다: {executable}")
+        args = [*resolved, *args[1:]]
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     completed = subprocess.run(
         args,
@@ -486,6 +622,34 @@ def run_process(args: list[str], cwd: Path, stdin: str | None = None, timeout: i
         tail = completed.stdout[-3000:].strip()
         raise RuntimeError(tail or f"명령 실행 실패: {args[0]}")
     return completed.stdout
+
+
+YT_DLP_TRANSIENT_RE = re.compile(r"HTTP Error (403|429|5\d\d)|timed out|Connection reset|IncompleteRead", re.I)
+
+
+def yt_dlp_base_args() -> list[str]:
+    args = ["yt-dlp", "--retries", "5", "--fragment-retries", "5", "--extractor-retries", "3"]
+    # YouTube extraction without a JS runtime is deprecated and gets 403s more often.
+    # yt-dlp only enables deno by default, so hand it Node when that is what is installed.
+    if not shutil.which("deno") and shutil.which("node"):
+        args.extend(["--js-runtimes", "node"])
+    return args
+
+
+def run_yt_dlp(args: list[str], cwd: Path, timeout: int, attempts: int = 3) -> str:
+    """yt-dlp with whole-command retries: YouTube 403s on signed media URLs are usually transient."""
+    last_error: RuntimeError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return run_process([*yt_dlp_base_args(), *args], cwd, timeout=timeout)
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt == attempts or not YT_DLP_TRANSIENT_RE.search(str(exc)):
+                raise
+            for partial in cwd.glob("*.part"):
+                partial.unlink(missing_ok=True)
+            time.sleep(5 * attempt)
+    raise last_error or RuntimeError("yt-dlp 실행 실패")
 
 
 def write_translation_prompt(job_dir: Path, title: str, level: str) -> str:
@@ -518,12 +682,98 @@ def write_translation_prompt(job_dir: Path, title: str, level: str) -> str:
     return prompt
 
 
+def transcript_cues(transcript: dict) -> list[dict]:
+    """Use Whisper word boundaries so captions do not occupy surrounding silence."""
+    cues: list[dict] = []
+    for segment in transcript.get("segments", []):
+        text = str(segment.get("text", "")).strip()
+        words = [
+            word for word in segment.get("words", [])
+            if str(word.get("word", "")).strip()
+            and word.get("start") is not None
+            and word.get("end") is not None
+            and float(word["end"]) > float(word["start"])
+        ]
+        if words:
+            # Avoid pre-roll from Whisper's broader segment window. A tiny tail pad
+            # keeps the last syllable readable without carrying into silent shots.
+            start = round(float(words[0]["start"]), 3)
+            end = round(float(words[-1]["end"]) + 0.12, 3)
+        else:
+            # Compatibility fallback for old transcripts without word timestamps.
+            start = round(float(segment.get("start", 0)), 3)
+            end = round(float(segment.get("end", 0)), 3)
+        if text and end > start:
+            cues.append({"start": start, "end": end, "text": text})
+
+    # Whisper can occasionally emit adjacent segments out of chronological order.
+    cues.sort(key=lambda cue: (cue["start"], cue["end"]))
+    for index, cue in enumerate(cues, start=1):
+        cue["id"] = index
+
+    # Tail padding and tiny timestamp reversals must never overlap the next cue.
+    for cue, next_cue in zip(cues, cues[1:]):
+        if cue["end"] > next_cue["start"]:
+            boundary = round((cue["end"] + next_cue["start"]) / 2, 3)
+            boundary = max(cue["start"] + 0.001, min(next_cue["end"] - 0.001, boundary))
+            cue["end"] = boundary
+            next_cue["start"] = boundary
+    return [cue for cue in cues if cue["end"] > cue["start"]]
+
+
+def normalize_srt_timings(text: str) -> str:
+    """Sort SRT blocks and split any remaining overlaps at a shared boundary."""
+    blocks = []
+    timing_re = re.compile(
+        r"(?P<sh>\d{2}):(?P<sm>\d{2}):(?P<ss>\d{2}),(?P<sms>\d{3})\s+-->\s+"
+        r"(?P<eh>\d{2}):(?P<em>\d{2}):(?P<es>\d{2}),(?P<ems>\d{3})"
+    )
+
+    def milliseconds(match: re.Match[str], prefix: str) -> int:
+        return (
+            ((int(match[f"{prefix}h"]) * 60 + int(match[f"{prefix}m"])) * 60 + int(match[f"{prefix}s"]))
+            * 1000
+            + int(match[f"{prefix}ms"])
+        )
+
+    for position, raw_block in enumerate(re.split(r"\r?\n\s*\r?\n", text.strip())):
+        lines = raw_block.splitlines()
+        timing_index = next((index for index, line in enumerate(lines) if timing_re.search(line)), -1)
+        if timing_index < 0:
+            continue
+        match = timing_re.search(lines[timing_index])
+        if not match:
+            continue
+        blocks.append(
+            {"position": position, "lines": lines, "timing_index": timing_index,
+             "start": milliseconds(match, "s"), "end": milliseconds(match, "e")}
+        )
+    blocks.sort(key=lambda block: (block["start"], block["end"], block["position"]))
+    for previous, current in zip(blocks, blocks[1:]):
+        if current["start"] < previous["end"]:
+            boundary = (previous["end"] + current["start"]) // 2
+            boundary = max(previous["start"] + 1, min(current["end"] - 1, boundary))
+            previous["end"] = boundary
+            current["start"] = boundary
+
+    output = []
+    for index, block in enumerate(blocks, start=1):
+        lines = block["lines"]
+        if lines and lines[0].strip().isdigit():
+            lines[0] = str(index)
+        lines[block["timing_index"]] = (
+            f"{srt_timestamp(block['start'] / 1000)} --> {srt_timestamp(block['end'] / 1000)}"
+        )
+        output.append("\n".join(lines))
+    return "\n\n".join(output) + "\n"
+
+
 def transcribe_with_whisper(
     job: dict, job_dir: Path, metadata_language: str = ""
 ) -> tuple[list[dict], str]:
     """Create stable speech segments locally so the LLM never invents subtitle timing."""
     job_id = job["id"]
-    if not shutil.which("whisper"):
+    if not resolve_tool_command("whisper"):
         raise RuntimeError("Whisper CLI를 찾을 수 없습니다. 정확한 싱크를 위해 설치가 필요합니다.")
     if job.get("source_type") == "local":
         source = local_source_path(job)
@@ -540,9 +790,9 @@ def transcribe_with_whisper(
         )
     else:
         update_job(job_id, stage="원음 내려받는 중", progress=22)
-        run_process(
+        run_yt_dlp(
             [
-                "yt-dlp", "--no-playlist", "-f", "ba", "-x", "--audio-format", "wav",
+                "--no-playlist", "-f", "ba", "-x", "--audio-format", "wav",
                 "-o", "source_audio.%(ext)s", job["url"],
             ],
             job_dir,
@@ -563,6 +813,7 @@ def transcribe_with_whisper(
         whisper_args = [
             "whisper", str(audio), "--model", model, "--task", "transcribe",
             "--output_dir", str(job_dir), "--output_format", "json", "--verbose", "False",
+            "--word_timestamps", "True",
         ]
         if language_hint:
             whisper_args.extend(["--language", language_hint])
@@ -593,13 +844,7 @@ def transcribe_with_whisper(
     if detected_language == "auto":
         detected_language = ""
     update_job(job_id, detected_language=detected_language)
-    cues = []
-    for segment in transcript.get("segments", []):
-        text = str(segment.get("text", "")).strip()
-        start = round(float(segment.get("start", 0)), 3)
-        end = round(float(segment.get("end", 0)), 3)
-        if text and end > start:
-            cues.append({"id": len(cues) + 1, "start": start, "end": end, "text": text})
+    cues = transcript_cues(transcript)
     if not cues:
         raise RuntimeError("Whisper 전사에서 발화 구간을 찾지 못했습니다.")
     (job_dir / "aligned_source.json").write_text(
@@ -616,36 +861,82 @@ def srt_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def translate_aligned_with_codex(
-    job_id: str, job_dir: Path, title: str, level: str, cues: list[dict], source_language: str = ""
-) -> None:
-    if not shutil.which("codex"):
-        raise RuntimeError("Codex CLI를 찾을 수 없습니다. 설치 또는 PATH 설정이 필요합니다.")
-    note_density = {
-        "economy": "문화역주는 꼭 이해가 막히는 곳에만 2~4개 넣는다.",
-        "culture": "문화역주는 꼭 필요한 지점에 4~10개 넣는다.",
-        "curator": "문화역주는 8~16개까지 허용하되 대사와 경쟁하지 않게 한다.",
-    }[level]
-    prompt = f"""당신은 2000년대 한국 팬자막 전성기의 숙련된 영상 번역가다.
-aligned_source.json의 모든 발화를 한국어로 번역하고 필요한 문화역주를 작성하라.
+TRANSLATION_CHUNK_SIZE = max(20, int(os.getenv("CULTURE_TRANSLATION_CHUNK", "200")))
+TRANSLATION_PARALLEL = max(1, int(os.getenv("CULTURE_TRANSLATION_PARALLEL", "2")))
+TRANSLATION_ATTEMPTS = 2
+TRANSLATION_CONTEXT_CUES = 4
+NOTE_LIMITS = {"economy": (2, 4), "culture": (4, 10), "curator": (8, 16)}
+# Codex sometimes gives up and fills the schema with placeholders such as
+# "원문 파일에 접근할 수 없어..." instead of translating. Treat those as failures.
+TRANSLATION_REFUSAL_RE = re.compile(r"(접근할 수 없|읽을 수 없|확인하지 못|번역을 (생성|작성)할 수 없)")
+SPEECHLESS_RE = re.compile(r"^[\W_\d♪]*$")
+
+
+def chunk_cues(cues: list[dict], size: int = TRANSLATION_CHUNK_SIZE) -> list[list[dict]]:
+    """Split long videos so one model call never has to hold hundreds of cues at once."""
+    if len(cues) <= size:
+        return [cues] if cues else []
+    count = -(-len(cues) // size)
+    even = -(-len(cues) // count)
+    return [cues[index:index + even] for index in range(0, len(cues), even)]
+
+
+def chunk_note_limit(level: str, chunk_len: int, total: int) -> int:
+    upper = NOTE_LIMITS[level][1]
+    return max(1, -(-upper * chunk_len // max(1, total)))
+
+
+def build_translation_prompt(
+    title: str,
+    level: str,
+    source_language: str,
+    chunk: list[dict],
+    context: list[dict],
+    part: int,
+    parts: int,
+    total: int,
+) -> str:
+    low, high = NOTE_LIMITS[level]
+    note_max = chunk_note_limit(level, len(chunk), total)
+    source_lines = "\n".join(
+        json.dumps({"id": cue["id"], "text": cue["text"]}, ensure_ascii=False) for cue in chunk
+    )
+    context_block = ""
+    if context:
+        context_lines = "\n".join(
+            json.dumps({"id": cue["id"], "text": cue["text"]}, ensure_ascii=False) for cue in context
+        )
+        context_block = f"\n[앞 구간 원문 - 맥락 참고용, 번역하지 말 것]\n{context_lines}\n"
+    return f"""당신은 2000년대 한국 팬자막 전성기의 숙련된 영상 번역가다.
+아래 [번역할 원문]의 모든 발화를 한국어로 번역하고 필요한 문화역주를 작성하라.
+원문은 이 프롬프트에 전부 들어 있다. 파일을 읽거나 명령을 실행하지 말고 바로 답하라.
+
 영상 제목: {title}
 원문 언어: {SOURCE_LANGUAGES.get(source_language, source_language or '자동 감지')}
+진행: 전체 {total}개 발화 중 {part}/{parts} 구간 (id {chunk[0]['id']}~{chunk[-1]['id']})
 
 필수 기준:
-- translations는 원본과 정확히 같은 개수이며 id도 정확히 일치해야 한다.
+- translations는 [번역할 원문]과 정확히 같은 개수({len(chunk)}개)이며, 각 항목의 id는 원문 id를 그대로 쓴다.
 - 시간은 이미 음성에서 확정했으므로 합치거나 나누거나 재배열하지 않는다.
+- 한 발화가 문장 중간에서 끊겼으면 앞뒤와 자연스럽게 이어지도록 번역하되, 각 id의 텍스트는 비우지 않는다.
 - 원문의 말투, 욕설, 비꼼, 성적 농담과 캐릭터성을 보존한다.
 - 문화권, 지역, 계층, 밈, 음식명, 말장난 때문에 이해가 막히는 곳만 notes에 넣는다.
-- {note_density}
-- 역주는 한 문장, 최대 두 줄 분량으로 쓴다.
+- 영상 전체 역주는 {low}~{high}개 수준이다. 이 구간에서는 0~{note_max}개만 넣는다.
+- 역주는 한 문장, 최대 두 줄 분량으로 쓴다. notes의 cue_id는 이 구간의 id여야 한다.
 - 고유명사나 불확실한 발화는 지어내지 않는다.
 - 검열음이 있는 욕설은 씨X, 존X처럼 일부 가린다.
+{context_block}
+[번역할 원문 - 한 줄에 하나씩 JSON]
+{source_lines}
 """
-    schema = {
+
+
+def translation_schema(count: int) -> dict:
+    return {
         "type": "object",
         "properties": {
             "translations": {
-                "type": "array", "minItems": len(cues), "maxItems": len(cues),
+                "type": "array", "minItems": count, "maxItems": count,
                 "items": {
                     "type": "object",
                     "properties": {"id": {"type": "integer"}, "text": {"type": "string"}},
@@ -663,35 +954,128 @@ aligned_source.json의 모든 발화를 한국어로 번역하고 필요한 문�
         },
         "required": ["translations", "notes"], "additionalProperties": False,
     }
-    schema_path = job_dir / "aligned.schema.json"
-    result_path = job_dir / "aligned_translation.json"
-    schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
-    (job_dir / "prompt.txt").write_text(prompt, encoding="utf-8")
-    update_job(job_id, stage=f"{LEVELS[level]['label']} 번역 중", progress=62)
-    run_process(
-        [
-            "codex", "exec", "-", "--model", os.getenv("CULTURE_SUB_MODEL", LEVELS[level]["model"]),
-            "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
-            "--output-schema", str(schema_path), "--output-last-message", str(result_path),
-            "--cd", str(job_dir),
-        ],
-        job_dir,
-        stdin=prompt,
-        timeout=3600,
+
+
+def parse_chunk_translation(result: dict, chunk: list[dict]) -> tuple[dict[int, str], list[dict]]:
+    """Validate one chunk and return {cue_id: text} plus notes that belong to it."""
+    translations = result.get("translations")
+    if not isinstance(translations, list) or len(translations) != len(chunk):
+        raise ValueError(f"번역 개수가 원문과 다릅니다 ({len(translations or [])}/{len(chunk)}).")
+    expected_ids = [cue["id"] for cue in chunk]
+    returned_ids = [item.get("id") for item in translations]
+    position_by_returned: dict = {}
+    if returned_ids != expected_ids:
+        # Same count but uniformly renumbered (0-based, or restarted per chunk): the order is
+        # still trustworthy, so map by position instead of failing the whole job.
+        offsets = {
+            returned - expected if isinstance(returned, int) else None
+            for returned, expected in zip(returned_ids, expected_ids)
+        }
+        if len(offsets) != 1 or None in offsets:
+            raise ValueError("번역 자막의 구간 번호가 원문과 일치하지 않습니다.")
+        position_by_returned = dict(zip(returned_ids, expected_ids))
+    texts = {cue["id"]: str(item.get("text", "")).strip() for cue, item in zip(chunk, translations)}
+    speech_ids = [cue["id"] for cue in chunk if not SPEECHLESS_RE.match(cue["text"].strip())]
+    unusable = [
+        cue_id for cue_id in speech_ids
+        if not texts[cue_id] or TRANSLATION_REFUSAL_RE.search(texts[cue_id])
+    ]
+    if len(unusable) > max(2, len(speech_ids) // 10):
+        raise ValueError(f"번역문이 비었거나 번역 대신 오류 문구가 들어간 구간이 많습니다 ({len(unusable)}/{len(speech_ids)}).")
+    chunk_ids = set(expected_ids)
+    notes = []
+    for note in result.get("notes", []) or []:
+        text = str(note.get("text", "")).strip()
+        cue_id = note.get("cue_id")
+        cue_id = position_by_returned.get(cue_id, cue_id)
+        if text and cue_id in chunk_ids and not TRANSLATION_REFUSAL_RE.search(text):
+            notes.append({"cue_id": cue_id, "text": text})
+    return texts, notes
+
+
+def translate_chunk_with_codex(
+    job_dir: Path, level: str, prompt: str, chunk: list[dict], part: int
+) -> tuple[dict[int, str], list[dict]]:
+    schema_path = job_dir / f"aligned.part{part:02d}.schema.json"
+    result_path = job_dir / f"aligned_translation.part{part:02d}.json"
+    schema_path.write_text(json.dumps(translation_schema(len(chunk)), ensure_ascii=False), encoding="utf-8")
+    (job_dir / f"prompt.part{part:02d}.txt").write_text(prompt, encoding="utf-8")
+    last_error: Exception | None = None
+    for attempt in range(1, TRANSLATION_ATTEMPTS + 1):
+        result_path.unlink(missing_ok=True)
+        try:
+            run_process(
+                [
+                    "codex", "exec", "-", "--model", os.getenv("CULTURE_SUB_MODEL", LEVELS[level]["model"]),
+                    "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
+                    "--output-schema", str(schema_path), "--output-last-message", str(result_path),
+                    "--cd", str(job_dir),
+                ],
+                job_dir,
+                stdin=prompt,
+                timeout=1800,
+            )
+            try:
+                result = json.loads(result_path.read_text(encoding="utf-8-sig"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError("AI 결과를 JSON으로 읽지 못했습니다.") from exc
+            return parse_chunk_translation(result, chunk)
+        except (ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            last_error = exc
+            if attempt < TRANSLATION_ATTEMPTS:
+                time.sleep(3)
+    raise RuntimeError(
+        f"{part}번째 번역 구간(id {chunk[0]['id']}~{chunk[-1]['id']})이 {TRANSLATION_ATTEMPTS}회 실패했습니다: {last_error}"
     )
-    result = json.loads(result_path.read_text(encoding="utf-8-sig"))
-    translations = result.get("translations", [])
-    expected_ids = [cue["id"] for cue in cues]
-    if [item.get("id") for item in translations] != expected_ids:
-        raise RuntimeError("번역 자막의 구간 번호가 원문과 일치하지 않습니다.")
+
+
+def translate_aligned_with_codex(
+    job_id: str, job_dir: Path, title: str, level: str, cues: list[dict], source_language: str = ""
+) -> None:
+    if not resolve_tool_command("codex"):
+        raise RuntimeError("Codex CLI를 찾을 수 없습니다. 설치 또는 PATH 설정이 필요합니다.")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    for stale in job_dir.glob("aligned_translation.part*.json"):
+        stale.unlink(missing_ok=True)
+    chunks = chunk_cues(cues)
+    parts = len(chunks)
+    label = LEVELS[level]["label"]
+    update_job(job_id, stage=f"{label} 번역 중 (0/{parts})", progress=60)
+    prompts = []
+    for index, chunk in enumerate(chunks):
+        previous = chunks[index - 1][-TRANSLATION_CONTEXT_CUES:] if index else []
+        prompts.append(
+            build_translation_prompt(title, level, source_language, chunk, previous, index + 1, parts, len(cues))
+        )
+    texts: dict[int, str] = {}
+    notes: list[dict] = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(TRANSLATION_PARALLEL, parts)) as pool:
+        futures = {
+            pool.submit(translate_chunk_with_codex, job_dir, level, prompt, chunk, index + 1): index
+            for index, (prompt, chunk) in enumerate(zip(prompts, chunks))
+        }
+        for future in as_completed(futures):
+            chunk_texts, chunk_notes = future.result()
+            texts.update(chunk_texts)
+            notes.extend(chunk_notes)
+            done += 1
+            update_job(job_id, stage=f"{label} 번역 중 ({done}/{parts})", progress=60 + round(28 * done / parts))
+    notes.sort(key=lambda note: note["cue_id"])
+    (job_dir / "aligned_translation.json").write_text(
+        json.dumps(
+            {"translations": [{"id": cue["id"], "text": texts[cue["id"]]} for cue in cues], "notes": notes},
+            ensure_ascii=False, indent=2,
+        ),
+        encoding="utf-8",
+    )
     note_map: dict[int, list[str]] = {}
-    for note in result.get("notes", []):
-        cue_id = int(note.get("cue_id", 0))
-        if cue_id in expected_ids and str(note.get("text", "")).strip():
-            note_map.setdefault(cue_id, []).append(str(note["text"]).strip())
+    for note in notes:
+        note_map.setdefault(note["cue_id"], []).append(note["text"])
     blocks = []
-    for cue, translated in zip(cues, translations):
-        lines = [str(translated.get("text", "")).strip()]
+    for cue in cues:
+        lines = [texts[cue["id"]] or cue["text"]]
         lines.extend(f"※ 역주: {note}" for note in note_map.get(cue["id"], []))
         blocks.append(
             f"{cue['id']}\n{srt_timestamp(cue['start'])} --> {srt_timestamp(cue['end'])}\n"
@@ -699,13 +1083,13 @@ aligned_source.json의 모든 발화를 한국어로 번역하고 필요한 문�
         )
     (job_dir / "culture.srt").write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
     (job_dir / "translation-notes.md").write_text(
-        "\n".join(f"- {n['cue_id']}번: {n['text']}" for n in result.get("notes", [])) + "\n",
+        "\n".join(f"- {n['cue_id']}번: {n['text']}" for n in notes) + "\n",
         encoding="utf-8",
     )
 
 
 def translate_with_codex(job_id: str, job_dir: Path, title: str, level: str) -> None:
-    if not shutil.which("codex"):
+    if not resolve_tool_command("codex"):
         raise RuntimeError("Codex CLI를 찾을 수 없습니다. 설치 또는 PATH 설정이 필요합니다.")
     prompt = write_translation_prompt(job_dir, title, level)
     schema = {
@@ -759,6 +1143,28 @@ def translate_with_codex(job_id: str, job_dir: Path, title: str, level: str) -> 
     )
 
 
+def load_reusable_transcript(job: dict, job_dir: Path) -> tuple[list[dict], str] | None:
+    """Return saved cues when a previous run got past transcription but failed later."""
+    if job.get("status") != "queued" or (job_dir / "culture.srt").exists():
+        return None
+    aligned = job_dir / "aligned_source.json"
+    if not aligned.is_file():
+        return None
+    try:
+        cues = json.loads(aligned.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(cues, list) or not cues or not all(
+        isinstance(cue, dict) and {"id", "start", "end", "text"} <= cue.keys() for cue in cues
+    ):
+        return None
+    language = str(job.get("detected_language") or "")
+    if not language:
+        requested = normalize_language(str(job.get("requested_language") or "auto"))
+        language = "" if requested == "auto" else requested
+    return cues, language
+
+
 def process_job(job: dict) -> None:
     job_id = job["id"]
     job_dir = JOBS_DIR / job_id
@@ -766,15 +1172,21 @@ def process_job(job: dict) -> None:
     try:
         update_job(job_id, status="downloading", stage="영상 정보 확인 중", progress=8, error="")
         metadata_language = ""
-        if job.get("source_type") == "local":
+        reusable = load_reusable_transcript(job, job_dir)
+        if reusable:
+            # Retry after a translation failure: the transcript already passed the quality
+            # gate, so skip re-downloading and re-running Whisper.
+            cues, detected_language = reusable
+            title = job.get("title") or job.get("source_name") or job_id
+            update_job(job_id, status="translating", stage="기존 전사 재사용", progress=58)
+        elif job.get("source_type") == "local":
             source = local_source_path(job)
             if not source.is_file():
                 raise RuntimeError("업로드한 원본 영상을 찾을 수 없습니다.")
             title = job.get("source_name") or source.stem
         else:
-            metadata_raw = run_process(
+            metadata_raw = run_yt_dlp(
                 [
-                    "yt-dlp",
                     "--no-playlist",
                     "--skip-download",
                     "--print-json",
@@ -787,13 +1199,17 @@ def process_job(job: dict) -> None:
             metadata = json.loads(metadata_line)
             title = metadata.get("title") or job["video_id"]
             metadata_language = normalize_language_hint(metadata.get("language"))
-        update_job(job_id, title=title, stage="정확한 음성 싱크 준비 중", progress=18)
-        cues, detected_language = transcribe_with_whisper(job, job_dir, metadata_language)
+        if not reusable:
+            update_job(job_id, title=title, stage="정확한 음성 싱크 준비 중", progress=18)
+            cues, detected_language = transcribe_with_whisper(job, job_dir, metadata_language)
         translate_aligned_with_codex(job_id, job_dir, title, job["level"], cues, detected_language)
         if job.get("source_type") == "local":
             prepare_local_playback(job)
         update_job(job_id, stage="자막 형식 검수 중", progress=92)
-        validate_srt((job_dir / "culture.srt").read_text(encoding="utf-8-sig"))
+        subtitle_path = job_dir / "culture.srt"
+        normalized_srt = normalize_srt_timings(subtitle_path.read_text(encoding="utf-8-sig"))
+        subtitle_path.write_text(normalized_srt, encoding="utf-8")
+        validate_srt(normalized_srt)
         update_job(
             job_id,
             status="completed",
@@ -877,9 +1293,9 @@ def prepare_export_source(job: dict, export_dir: Path) -> Path:
                 timeout=7200,
             )
     else:
-        run_process(
+        run_yt_dlp(
             [
-                "yt-dlp", "-f", "bv*[height<=720]+ba/b[height<=720]",
+                "-f", "bv*[height<=720]+ba/b[height<=720]",
                 "--merge-output-format", "mp4", "-o", str(export_dir / "source.%(ext)s"),
                 job["youtube_url"],
             ],
@@ -1074,8 +1490,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True, "service": "문화자막 큐"})
             return
         if parsed.path == "/api/bootstrap":
-            if self.client_address[0] not in {"127.0.0.1", "::1"}:
-                self.send_json({"error": "로컬 PC에서만 토큰을 자동 발급합니다."}, HTTPStatus.FORBIDDEN)
+            if not is_trusted_pairing_client(self.client_address[0]):
+                self.send_json({"error": "로컬 또는 Tailscale 기기에서만 자동 페어링합니다."}, HTTPStatus.FORBIDDEN)
                 return
             self.send_json({"token": self.server.access_token})  # type: ignore[attr-defined]
             return
@@ -1112,6 +1528,9 @@ class AppHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/jobs":
             self.send_json({"jobs": list_jobs()})
+            return
+        if parsed.path == "/api/playlists":
+            self.send_json({"playlists": list_playlists()})
             return
         match = re.fullmatch(r"/api/jobs/by-video/([A-Za-z0-9_-]{11})", parsed.path)
         if match:
@@ -1171,6 +1590,13 @@ class AppHandler(SimpleHTTPRequestHandler):
                     str(payload.get("language", "auto")),
                 )
                 self.send_json({"job": job}, HTTPStatus.CREATED)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/playlists":
+            try:
+                playlist = create_playlist(self.read_json().get("name", ""))
+                self.send_json({"playlist": playlist}, HTTPStatus.CREATED)
             except ValueError as exc:
                 self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
@@ -1247,6 +1673,16 @@ class AppHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/") or not self.authorized():
             self.send_json({"error": "페어링 토큰이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+            return
+        if parsed.path == "/api/jobs/bulk":
+            try:
+                payload = self.read_json()
+                jobs = organize_jobs(payload.get("ids", []), payload)
+                self.send_json({"jobs": jobs})
+            except FileNotFoundError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         match = re.fullmatch(r"/api/jobs/([A-Za-z0-9_-]+)", parsed.path)
         if not match:

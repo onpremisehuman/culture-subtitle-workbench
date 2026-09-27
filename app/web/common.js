@@ -9,10 +9,21 @@ const CultureAPI = (() => {
     localStorage.setItem(TOKEN_KEY, token.trim());
   }
 
-  async function bootstrap() {
+  function clearToken() {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+
+  async function bootstrap(force = false) {
+    if (force) clearToken();
     if (getToken()) return getToken();
-    const response = await fetch("/api/bootstrap");
-    if (!response.ok) throw new Error("pairing-required");
+    let response;
+    try {
+      response = await fetch("/api/bootstrap");
+    } catch (_) {
+      throw new Error("server-unreachable");
+    }
+    if (response.status === 403) throw new Error("pairing-required");
+    if (!response.ok) throw new Error(`서버 연결 실패 (${response.status})`);
     const data = await response.json();
     setToken(data.token);
     return data.token;
@@ -23,7 +34,21 @@ const CultureAPI = (() => {
     const headers = new Headers(options.headers || {});
     headers.set("Authorization", `Bearer ${token}`);
     if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    const response = await fetch(path, {...options, headers});
+    let response;
+    try {
+      response = await fetch(path, {...options, headers});
+    } catch (_) {
+      throw new Error("server-unreachable");
+    }
+    if (response.status === 401) {
+      const refreshedToken = await bootstrap(true);
+      headers.set("Authorization", `Bearer ${refreshedToken}`);
+      try {
+        response = await fetch(path, {...options, headers});
+      } catch (_) {
+        throw new Error("server-unreachable");
+      }
+    }
     let data;
     if ((response.headers.get("content-type") || "").includes("json")) data = await response.json();
     else data = await response.text();
@@ -50,7 +75,7 @@ const CultureAPI = (() => {
     }).filter(Boolean);
   }
 
-  return {getToken, setToken, bootstrap, request, parseSrt};
+  return {getToken, setToken, clearToken, bootstrap, request, parseSrt};
 })();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/app/sw.js").catch(() => {});

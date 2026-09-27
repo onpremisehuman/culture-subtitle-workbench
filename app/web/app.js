@@ -3,20 +3,37 @@ const jobList = document.querySelector("#job-list");
 const message = document.querySelector("#form-message");
 const connection = document.querySelector("#connection");
 const pairDialog = document.querySelector("#pair-dialog");
+const serverDialog = document.querySelector("#server-dialog");
+const serverDialogTitle = document.querySelector("#server-dialog-title");
+const serverDialogMessage = document.querySelector("#server-dialog-message");
+const serverDialogDetail = document.querySelector("#server-dialog-message-detail");
+const serverAddress = document.querySelector("#server-address");
+const serverTools = document.querySelector("#server-tools");
 const videoUrl = document.querySelector("#video-url");
 const videoFile = document.querySelector("#video-file");
 const deleteDialog = document.querySelector("#delete-dialog");
 const deleteForm = document.querySelector("#delete-form");
 const playlistDialog = document.querySelector("#playlist-dialog");
 const playlistForm = document.querySelector("#playlist-form");
+const createPlaylistDialog = document.querySelector("#create-playlist-dialog");
+const createPlaylistForm = document.querySelector("#create-playlist-form");
 const libraryTabs = document.querySelector("#library-tabs");
+const selectVisible = document.querySelector("#select-visible");
+const selectionCount = document.querySelector("#selection-count");
+const bulkPlaylistButton = document.querySelector("#bulk-playlist-button");
+const clearSelectionButton = document.querySelector("#clear-selection-button");
 let knownStatuses = new Map();
 let allJobs = [];
-let activeLibrary = "visible";
+let playlistCatalog = ["기본 재생목록"];
+let renderedJobIds = [];
+const selectedJobIds = new Set();
+let lastSelectionIndex = null;
+let activeLibrary = "playlist:기본 재생목록";
 let currentSource = "youtube";
 let activePlayer = null;
 let pendingDeleteJob = null;
 let pendingPlaylistJob = null;
+let serverConnected = false;
 
 document.querySelectorAll(".level-option input").forEach(input => {
   input.addEventListener("change", () => {
@@ -41,19 +58,69 @@ videoFile.addEventListener("change", () => {
   document.querySelector("#file-name").textContent = videoFile.files[0]?.name || "MP4·MOV·WebM·MKV·AVI";
 });
 
-async function ensureConnection() {
+function showServerDialog(mode = "offline") {
+  const online = mode === "online";
+  serverDialogTitle.textContent = online ? "문화자막 서버가 정상 작동 중입니다." : "문화자막 서버에 연결되지 않습니다.";
+  serverDialogMessage.textContent = online
+    ? "작업 대기열과 자막 파일은 이 PC의 서버에서 처리됩니다."
+    : "PC가 켜져 있고 Tailscale이 연결되어 있는지 확인하세요. PC에 로그인하면 서버는 창 없이 자동으로 시작됩니다.";
+  serverAddress.textContent = location.origin;
+  serverTools.hidden = !online;
+  serverDialogDetail.textContent = "";
+  if (!serverDialog.open) serverDialog.showModal();
+}
+
+function setConnectionState(online, label) {
+  serverConnected = online;
+  connection.classList.toggle("online", online);
+  connection.lastChild.textContent = ` ${label}`;
+}
+
+async function ensureConnection(showFailure = true) {
   try {
-    await CultureAPI.bootstrap();
-    connection.classList.add("online");
-    connection.lastChild.textContent = " 연결됨";
+    await CultureAPI.request("/api/jobs");
+    setConnectionState(true, "연결됨");
     return true;
   } catch (error) {
-    connection.classList.remove("online");
-    connection.lastChild.textContent = " 페어링 필요";
-    pairDialog.showModal();
+    if (error.message === "pairing-required") {
+      setConnectionState(false, "페어링 필요");
+      if (showFailure && !pairDialog.open) pairDialog.showModal();
+    } else {
+      setConnectionState(false, "서버 꺼짐");
+      if (showFailure) showServerDialog("offline");
+    }
     return false;
   }
 }
+
+connection.addEventListener("click", () => showServerDialog(serverConnected ? "online" : "offline"));
+document.querySelector("#server-close").addEventListener("click", () => serverDialog.close());
+document.querySelector("#server-retry").addEventListener("click", async () => {
+  const button = document.querySelector("#server-retry");
+  button.disabled = true;
+  serverDialogDetail.textContent = "서버를 다시 확인하는 중…";
+  const ok = await ensureConnection(false);
+  if (ok) {
+    serverDialog.close();
+    await loadJobs();
+  } else {
+    serverDialogDetail.textContent = "아직 연결되지 않습니다. PC 로그인과 Tailscale 연결 상태를 확인하세요.";
+  }
+  button.disabled = false;
+});
+document.querySelector("#copy-server-address").addEventListener("click", async () => {
+  await navigator.clipboard.writeText(location.origin);
+  serverDialogDetail.textContent = "서버 주소를 복사했습니다.";
+});
+document.querySelector("#copy-pair-token").addEventListener("click", async () => {
+  const token = CultureAPI.getToken();
+  if (!token) {
+    serverDialogDetail.textContent = "먼저 서버에 연결해야 토큰을 복사할 수 있습니다.";
+    return;
+  }
+  await navigator.clipboard.writeText(token);
+  serverDialogDetail.textContent = "페어링 토큰을 복사했습니다. 본인 기기에만 입력하세요.";
+});
 
 document.querySelector("#pair-form").addEventListener("submit", event => {
   event.preventDefault();
@@ -127,7 +194,14 @@ function escapeHtml(value) {
 }
 
 function playlistNames(jobs = allJobs) {
-  return [...new Set(jobs.map(job => job.playlist || "기본 재생목록"))].sort((a, b) => a.localeCompare(b, "ko"));
+  return [...new Set([
+    ...playlistCatalog,
+    ...jobs.map(job => job.playlist || "기본 재생목록")
+  ])].sort((a, b) => {
+    if (a === "기본 재생목록") return -1;
+    if (b === "기본 재생목록") return 1;
+    return a.localeCompare(b, "ko");
+  });
 }
 
 function renderLibrary() {
@@ -142,6 +216,7 @@ function renderLibrary() {
   libraryTabs.innerHTML = tabs.map(tab => `<button class="library-tab${tab.key === activeLibrary ? " active" : ""}" type="button" role="tab" aria-selected="${tab.key === activeLibrary}" data-library="${escapeHtml(tab.key)}">${escapeHtml(tab.label)}</button>`).join("");
   libraryTabs.querySelectorAll("button").forEach(button => button.addEventListener("click", () => {
     activeLibrary = button.dataset.library;
+    clearSelection();
     renderLibrary();
   }));
   const jobs = activeLibrary === "hidden"
@@ -153,8 +228,10 @@ function renderLibrary() {
 }
 
 function renderJobs(jobs) {
+  renderedJobIds = jobs.map(job => job.id);
   if (!jobs.length) {
     jobList.innerHTML = '<div class="empty">아직 맡겨둔 영상이 없습니다.</div>';
+    updateSelectionUi();
     return;
   }
   jobList.innerHTML = jobs.map(job => {
@@ -166,7 +243,10 @@ function renderJobs(jobs) {
       ? '<div class="local-thumb" aria-label="로컬 영상"><span>※</span></div>'
       : `<img class="thumb" src="https://i.ytimg.com/vi/${escapeHtml(job.video_id)}/mqdefault.jpg" alt="" loading="lazy">`;
     return `
-      <article class="job-card" data-job-id="${escapeHtml(job.id)}">
+      <article class="job-card${selectedJobIds.has(job.id) ? " selected" : ""}" data-job-id="${escapeHtml(job.id)}">
+        <label class="job-select" title="선택">
+          <input type="checkbox" data-select-id="${escapeHtml(job.id)}" aria-label="${escapeHtml(job.title || job.video_id)} 선택" ${selectedJobIds.has(job.id) ? "checked" : ""}>
+        </label>
         ${thumbnail}
         <div class="job-main">
           <h3 class="job-title">${escapeHtml(job.title || "영상 정보를 확인하는 중")}</h3>
@@ -194,7 +274,125 @@ function renderJobs(jobs) {
   document.querySelectorAll("[data-delete-id]").forEach(button => button.addEventListener("click", () => openDeleteDialog(button)));
   document.querySelectorAll("[data-playlist-id]").forEach(button => button.addEventListener("click", () => openPlaylistDialog(button)));
   document.querySelectorAll("[data-hide-id]").forEach(button => button.addEventListener("click", () => toggleHidden(button)));
+  document.querySelectorAll("[data-select-id]").forEach(input => input.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const index = renderedJobIds.indexOf(input.dataset.selectId);
+    toggleJobSelection(index, event.shiftKey);
+  }));
+  document.querySelectorAll(".job-card").forEach(card => card.addEventListener("click", event => {
+    if (event.target.closest("button, a, input, label, select, video")) return;
+    const index = renderedJobIds.indexOf(card.dataset.jobId);
+    selectJobFromCard(index, event);
+  }));
+  updateSelectionUi();
 }
+
+function setSelectedRange(fromIndex, toIndex, selected = true) {
+  const start = Math.max(0, Math.min(fromIndex, toIndex));
+  const end = Math.min(renderedJobIds.length - 1, Math.max(fromIndex, toIndex));
+  for (let index = start; index <= end; index += 1) {
+    if (selected) selectedJobIds.add(renderedJobIds[index]);
+    else selectedJobIds.delete(renderedJobIds[index]);
+  }
+}
+
+function toggleJobSelection(index, shiftKey = false) {
+  if (index < 0) return;
+  const id = renderedJobIds[index];
+  const shouldSelect = !selectedJobIds.has(id);
+  if (shiftKey && lastSelectionIndex !== null) setSelectedRange(lastSelectionIndex, index, shouldSelect);
+  else if (shouldSelect) selectedJobIds.add(id);
+  else selectedJobIds.delete(id);
+  lastSelectionIndex = index;
+  updateSelectionUi();
+}
+
+function selectJobFromCard(index, event) {
+  if (index < 0) return;
+  const id = renderedJobIds[index];
+  if (event.shiftKey && lastSelectionIndex !== null) {
+    setSelectedRange(lastSelectionIndex, index, true);
+  } else if (event.ctrlKey || event.metaKey) {
+    if (selectedJobIds.has(id)) selectedJobIds.delete(id);
+    else selectedJobIds.add(id);
+    lastSelectionIndex = index;
+  } else {
+    selectedJobIds.clear();
+    selectedJobIds.add(id);
+    lastSelectionIndex = index;
+  }
+  updateSelectionUi();
+}
+
+function updateSelectionUi() {
+  document.querySelectorAll(".job-card").forEach(card => {
+    const selected = selectedJobIds.has(card.dataset.jobId);
+    card.classList.toggle("selected", selected);
+    const input = card.querySelector("[data-select-id]");
+    if (input) input.checked = selected;
+  });
+  const selectedVisible = renderedJobIds.filter(id => selectedJobIds.has(id)).length;
+  selectVisible.checked = Boolean(renderedJobIds.length) && selectedVisible === renderedJobIds.length;
+  selectVisible.indeterminate = selectedVisible > 0 && selectedVisible < renderedJobIds.length;
+  selectVisible.disabled = !renderedJobIds.length;
+  selectionCount.textContent = `선택 ${selectedJobIds.size}개`;
+  bulkPlaylistButton.disabled = selectedJobIds.size === 0;
+  clearSelectionButton.disabled = selectedJobIds.size === 0;
+}
+
+function clearSelection() {
+  selectedJobIds.clear();
+  lastSelectionIndex = null;
+  updateSelectionUi();
+}
+
+selectVisible.addEventListener("change", () => {
+  renderedJobIds.forEach(id => {
+    if (selectVisible.checked) selectedJobIds.add(id);
+    else selectedJobIds.delete(id);
+  });
+  lastSelectionIndex = null;
+  updateSelectionUi();
+});
+
+clearSelectionButton.addEventListener("click", clearSelection);
+bulkPlaylistButton.addEventListener("click", () => {
+  const jobs = allJobs.filter(job => selectedJobIds.has(job.id));
+  if (jobs.length) openPlaylistDialogForJobs(jobs);
+});
+
+document.querySelector("#create-playlist-button").addEventListener("click", () => {
+  const input = document.querySelector("#new-playlist-name");
+  input.value = "";
+  document.querySelector("#create-playlist-dialog-message").textContent = "";
+  document.querySelector("#create-playlist-confirm").disabled = false;
+  createPlaylistDialog.showModal();
+  input.focus();
+});
+
+document.querySelector("#create-playlist-cancel").addEventListener("click", () => {
+  createPlaylistDialog.close("cancel");
+});
+
+createPlaylistForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const input = document.querySelector("#new-playlist-name");
+  const confirm = document.querySelector("#create-playlist-confirm");
+  const dialogMessage = document.querySelector("#create-playlist-dialog-message");
+  confirm.disabled = true;
+  try {
+    const {playlist} = await CultureAPI.request("/api/playlists", {
+      method: "POST", body: JSON.stringify({name: input.value.trim()})
+    });
+    activeLibrary = `playlist:${playlist}`;
+    createPlaylistDialog.close("created");
+    await loadJobs();
+  } catch (error) {
+    dialogMessage.textContent = error.message;
+    confirm.disabled = false;
+  }
+});
 
 async function toggleHidden(button) {
   button.disabled = true;
@@ -210,10 +408,23 @@ async function toggleHidden(button) {
 }
 
 function openPlaylistDialog(button) {
-  pendingPlaylistJob = {id: button.dataset.playlistId, title: button.dataset.playlistTitle};
+  openPlaylistDialogForJobs([{
+    id: button.dataset.playlistId,
+    title: button.dataset.playlistTitle,
+    playlist: button.dataset.playlistName || "기본 재생목록"
+  }]);
+}
+
+function openPlaylistDialogForJobs(jobs) {
+  const currentPlaylists = [...new Set(jobs.map(job => job.playlist || "기본 재생목록"))];
+  pendingPlaylistJob = {
+    ids: jobs.map(job => job.id),
+    title: jobs.length === 1 ? jobs[0].title : `${jobs.length}개 영상을 한꺼번에 이동`,
+    playlist: currentPlaylists.length === 1 ? currentPlaylists[0] : ""
+  };
   document.querySelector("#playlist-job-title").textContent = pendingPlaylistJob.title;
   const input = document.querySelector("#playlist-name");
-  input.value = button.dataset.playlistName || "기본 재생목록";
+  input.value = pendingPlaylistJob.playlist;
   document.querySelector("#playlist-names").innerHTML = playlistNames().map(name => `<option value="${escapeHtml(name)}"></option>`).join("");
   document.querySelector("#playlist-dialog-message").textContent = "";
   document.querySelector("#playlist-confirm").disabled = false;
@@ -234,11 +445,18 @@ playlistForm.addEventListener("submit", async event => {
   confirm.disabled = true;
   try {
     const playlist = document.querySelector("#playlist-name").value.trim();
-    await CultureAPI.request(`/api/jobs/${pendingPlaylistJob.id}`, {
-      method: "PATCH", body: JSON.stringify({playlist})
-    });
+    if (pendingPlaylistJob.ids.length === 1) {
+      await CultureAPI.request(`/api/jobs/${pendingPlaylistJob.ids[0]}`, {
+        method: "PATCH", body: JSON.stringify({playlist})
+      });
+    } else {
+      await CultureAPI.request("/api/jobs/bulk", {
+        method: "PATCH", body: JSON.stringify({ids: pendingPlaylistJob.ids, playlist})
+      });
+    }
     activeLibrary = `playlist:${playlist.replace(/\s+/g, " ")}`;
     pendingPlaylistJob = null;
+    clearSelection();
     playlistDialog.close("saved");
     await loadJobs();
   } catch (error) {
@@ -504,23 +722,40 @@ async function openAlwaysOnTop(state, button) {
 
 async function loadJobs() {
   try {
-    const {jobs} = await CultureAPI.request("/api/jobs");
+    const [{jobs}, {playlists}] = await Promise.all([
+      CultureAPI.request("/api/jobs"),
+      CultureAPI.request("/api/playlists")
+    ]);
     const justCompleted = jobs.filter(job => knownStatuses.has(job.id) && knownStatuses.get(job.id) !== "completed" && job.status === "completed");
     jobs.forEach(job => knownStatuses.set(job.id, job.status));
     allJobs = jobs;
+    playlistCatalog = playlists;
+    const existingIds = new Set(jobs.map(job => job.id));
+    [...selectedJobIds].forEach(id => { if (!existingIds.has(id)) selectedJobIds.delete(id); });
+    const focusId = new URLSearchParams(location.search).get("focus");
+    const focusJob = jobs.find(job => job.id === focusId && job.status === "completed");
+    if (focusJob && !activePlayer) {
+      activeLibrary = focusJob.hidden ? "hidden" : `playlist:${focusJob.playlist || "기본 재생목록"}`;
+    }
     const playingId = activePlayer?.host.closest(".job-card")?.dataset.jobId;
     if (!playingId) renderLibrary();
     if (justCompleted.length && "Notification" in window && Notification.permission === "granted") {
       new Notification("문화자막이 완성됐습니다", {body: justCompleted[0].title, icon: "/app/icon-192.png"});
     }
-    const focusId = new URLSearchParams(location.search).get("focus");
-    if (focusId && !activePlayer && jobs.some(job => job.id === focusId && job.status === "completed")) {
+    if (focusJob && !activePlayer) {
       history.replaceState({}, "", "/app/");
       openInlinePlayer(focusId);
     }
   } catch (error) {
-    if (error.message === "pairing-required") pairDialog.showModal();
-    else jobList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    if (error.message === "pairing-required") {
+      setConnectionState(false, "페어링 필요");
+      if (!pairDialog.open) pairDialog.showModal();
+    } else if (error.message === "server-unreachable") {
+      setConnectionState(false, "서버 꺼짐");
+      jobList.innerHTML = '<div class="empty">문화자막 서버가 꺼져 있습니다. 위의 ‘서버 꺼짐’을 눌러 다시 확인하세요.</div>';
+    } else {
+      jobList.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
+    }
   }
 }
 

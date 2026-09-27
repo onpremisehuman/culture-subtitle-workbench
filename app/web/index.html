@@ -16,7 +16,7 @@
     </a>
     <div class="top-actions">
       <button class="notify-button" id="notify-button" type="button">완료 알림</button>
-      <div class="connection" id="connection"><span></span> 연결 확인 중</div>
+      <button class="connection" id="connection" type="button" aria-haspopup="dialog"><span></span> 연결 확인 중</button>
     </div>
   </header>
 
@@ -60,6 +60,7 @@
             <option value="ja">일본어</option>
             <option value="zh">중국어</option>
             <option value="ru">러시아어</option>
+            <option value="pl">폴란드어</option>
             <option value="fr">프랑스어</option>
             <option value="de">독일어</option>
             <option value="it">이탈리아어</option>
@@ -98,9 +99,22 @@
           <p class="eyebrow">내 작업함</p>
           <h2 id="queue-title">맡겨둔 영상</h2>
         </div>
-        <button class="quiet" id="refresh-button" type="button">새로고침</button>
+        <div class="section-actions">
+          <button class="organize-button" id="create-playlist-button" type="button">+ 재생목록 만들기</button>
+          <button class="quiet" id="refresh-button" type="button">새로고침</button>
+        </div>
       </div>
       <div class="library-tabs" id="library-tabs" role="tablist" aria-label="재생목록"></div>
+      <div class="bulk-toolbar" id="bulk-toolbar" aria-label="여러 영상 선택 도구">
+        <label class="select-all-label">
+          <input id="select-visible" type="checkbox">
+          <span>현재 목록 전체</span>
+        </label>
+        <strong id="selection-count" aria-live="polite">선택 0개</strong>
+        <span class="selection-help">Ctrl 개별 · Shift 범위</span>
+        <button class="organize-button" id="bulk-playlist-button" type="button" disabled>선택 항목 재생목록 이동</button>
+        <button class="quiet" id="clear-selection-button" type="button" disabled>선택 해제</button>
+      </div>
       <div class="job-list" id="job-list" aria-live="polite"></div>
     </section>
   </main>
@@ -118,6 +132,24 @@
     </form>
   </dialog>
 
+  <dialog id="server-dialog" aria-labelledby="server-dialog-title">
+    <form method="dialog" id="server-form">
+      <p class="eyebrow">서버 상태</p>
+      <h2 id="server-dialog-title">문화자막 서버에 연결되지 않습니다.</h2>
+      <p id="server-dialog-message">PC가 켜져 있고 Tailscale이 연결되어 있는지 확인하세요. PC에 로그인하면 서버는 창 없이 자동으로 시작됩니다.</p>
+      <p class="server-address" id="server-address"></p>
+      <p class="dialog-message" id="server-dialog-message-detail" role="status"></p>
+      <div class="server-tools" id="server-tools" hidden>
+        <button class="quiet" id="copy-server-address" type="button">서버 주소 복사</button>
+        <button class="quiet" id="copy-pair-token" type="button">페어링 토큰 복사</button>
+      </div>
+      <div class="dialog-actions">
+        <button class="quiet" value="cancel" type="button" id="server-close">닫기</button>
+        <button class="primary" value="default" type="button" id="server-retry">다시 연결</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="playlist-dialog" aria-labelledby="playlist-dialog-title">
     <form method="dialog" id="playlist-form">
       <p class="eyebrow">재생목록 정리</p>
@@ -130,6 +162,20 @@
       <div class="dialog-actions">
         <button class="quiet" value="cancel" type="button" id="playlist-cancel">취소</button>
         <button class="primary" value="default" type="submit" id="playlist-confirm">옮기기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="create-playlist-dialog" aria-labelledby="create-playlist-dialog-title">
+    <form method="dialog" id="create-playlist-form">
+      <p class="eyebrow">재생목록 만들기</p>
+      <h2 id="create-playlist-dialog-title">새 재생목록 이름</h2>
+      <label for="new-playlist-name">재생목록 이름</label>
+      <input id="new-playlist-name" maxlength="40" autocomplete="off" required>
+      <p class="dialog-message" id="create-playlist-dialog-message" role="status"></p>
+      <div class="dialog-actions">
+        <button class="quiet" value="cancel" type="button" id="create-playlist-cancel">취소</button>
+        <button class="primary" value="default" type="submit" id="create-playlist-confirm">만들기</button>
       </div>
     </form>
   </dialog>
