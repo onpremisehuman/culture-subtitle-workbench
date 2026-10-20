@@ -93,6 +93,30 @@ def is_trusted_pairing_client(value: str, trust_tailscale: bool | None = None) -
     return trust_tailscale and address.version == 4 and address in TAILSCALE_NETWORK
 
 
+EXTENSION_ORIGIN_RE = re.compile(r"chrome-extension://[a-p]{32}")
+
+
+def is_allowed_request(host: str | None, origin: str | None, extra_hosts: str | None = None) -> bool:
+    """Block DNS rebinding (foreign Host) and cross-site pages (foreign Origin).
+
+    Hosts that are IP literals or localhost cannot be rebound, so LAN/Tailscale IPs keep
+    working. Named hosts such as a MagicDNS name must be listed in CULTURE_ALLOWED_HOSTS.
+    """
+    if not host:
+        return False
+    if extra_hosts is None:
+        extra_hosts = os.getenv("CULTURE_ALLOWED_HOSTS", "")
+    hostname = urlparse(f"//{host}").hostname or ""
+    allowed_names = {"localhost", *(name.strip().lower() for name in extra_hosts.split(",") if name.strip())}
+    try:
+        ip_address(hostname)
+    except ValueError:
+        if hostname.lower() not in allowed_names:
+            return False
+    # Same-origin page fetches and CLI tools are fine; other sites and "null" are not.
+    return origin is None or origin == f"http://{host}" or EXTENSION_ORIGIN_RE.fullmatch(origin) is not None
+
+
 def extract_video_id(value: str) -> str:
     value = value.strip()
     if VIDEO_ID_RE.fullmatch(value):
@@ -1603,16 +1627,18 @@ class AppHandler(SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type, Range")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+        # No CORS headers: the workbench is same-origin and the extension uses host_permissions.
         super().end_headers()
 
-    def do_OPTIONS(self) -> None:
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self.end_headers()
+    def reject_untrusted(self) -> bool:
+        if is_allowed_request(self.headers.get("Host"), self.headers.get("Origin")):
+            return False
+        self.send_json({"error": "허용되지 않은 주소나 출처에서 온 요청입니다."}, HTTPStatus.FORBIDDEN)
+        return True
 
     def do_GET(self) -> None:
+        if self.reject_untrusted():
+            return
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self.send_response(HTTPStatus.FOUND)
@@ -1720,6 +1746,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.serve_static(parsed.path)
 
     def do_POST(self) -> None:
+        if self.reject_untrusted():
+            return
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/") or not self.authorized():
             self.send_json({"error": "페어링 토큰이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
@@ -1806,6 +1834,8 @@ class AppHandler(SimpleHTTPRequestHandler):
         self.send_json({"error": "지원하지 않는 요청입니다."}, HTTPStatus.NOT_FOUND)
 
     def do_DELETE(self) -> None:
+        if self.reject_untrusted():
+            return
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/") or not self.authorized():
             self.send_json({"error": "페어링 토큰이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
@@ -1823,6 +1853,8 @@ class AppHandler(SimpleHTTPRequestHandler):
             self.send_json({"error": str(exc)}, HTTPStatus.CONFLICT)
 
     def do_PATCH(self) -> None:
+        if self.reject_untrusted():
+            return
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/") or not self.authorized():
             self.send_json({"error": "페어링 토큰이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
@@ -1864,7 +1896,11 @@ class AppHandler(SimpleHTTPRequestHandler):
         return secrets.compare_digest(self.headers.get("Authorization", ""), expected)
 
     def read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length", "0"))
+        raw_length = self.headers.get("Content-Length", "0")
+        # A negative length would make rfile.read() block until the client hangs up.
+        if not raw_length.isdigit():
+            raise ValueError("요청 크기가 올바르지 않습니다.")
+        length = int(raw_length)
         if length > 100_000:
             raise ValueError("요청이 너무 큽니다.")
         return json.loads(self.rfile.read(length).decode("utf-8"))

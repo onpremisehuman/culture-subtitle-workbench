@@ -1,5 +1,11 @@
 # 변경 기록
 
+## 2026-10-20 (로컬 API 출처 검사)
+
+- 작업 서버의 `Access-Control-Allow-Origin: *` 제거. 서버를 켜둔 채 아무 웹사이트나 열면 그 사이트가 `/api/bootstrap`으로 페어링 토큰을 읽어갈 수 있던 문제 수정
+- 모든 요청에서 Host·Origin 검사. IP·`localhost`가 아닌 Host(DNS 리바인딩)와 다른 웹사이트 Origin은 403. 확장(`chrome-extension://`)과 같은 출처 화면은 그대로 허용. 이름으로 접속하려면 `CULTURE_ALLOWED_HOSTS`
+- JSON 요청의 `Content-Length`가 숫자가 아니거나 음수면 거부(요청 스레드가 멈추던 문제)
+
 ## 2026-10-20 (공개판 v0.11.0 갱신)
 
 - 운영본의 다국어 전사·전체 문맥 분석/전체 검수·이어보기·전체화면 UI·YouTube 카드 메뉴를 공개판에 반영
