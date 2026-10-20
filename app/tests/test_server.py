@@ -333,6 +333,21 @@ class ChunkedTranslationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             server_module.parse_chunk_translation(result, chunk)
 
+    def test_untranslated_audio_placeholder_is_rejected(self):
+        chunk = make_cues(3)
+        result = {
+            "translations": [
+                {"id": cue["id"], "text": "[원음 확인 필요]" if cue["id"] == 2 else "번역"}
+                for cue in chunk
+            ],
+            "notes": [],
+        }
+        texts, _ = server_module.parse_chunk_translation(result, chunk)
+        with self.assertRaisesRegex(ValueError, "오류 문구"):
+            server_module.translation_context.clean_text(
+                texts[2], server_module.TRANSLATION_REFUSAL_RE
+            )
+
     def test_scrambled_ids_are_rejected(self):
         chunk = make_cues(3)
         result = {"translations": [{"id": i, "text": "x"} for i in (3, 1, 2)], "notes": []}
@@ -350,6 +365,8 @@ class ChunkedTranslationTests(unittest.TestCase):
                 patch.object(server_module, "TRANSLATION_CHUNK_SIZE", 2), \
                 patch.object(server_module, "chunk_cues", lambda c: [c[0:2], c[2:4], c[4:]]), \
                 patch.object(server_module, "translate_chunk_with_codex", side_effect=fake_chunk), \
+                patch.object(server_module.translation_context, "global_guide", return_value={}), \
+                patch.object(server_module.translation_context, "review_all", side_effect=lambda c, t, n, *args: (t, n, {})), \
                 patch.object(server_module.agent_cli, "resolve_backend", return_value="claude"), \
                 patch.object(server_module, "update_job"):
             job_dir = Path(tmp)

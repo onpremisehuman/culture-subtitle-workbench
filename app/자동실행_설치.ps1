@@ -3,39 +3,28 @@ param()
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$launcherPath = Join-Path $projectRoot "culture-subtitle-autostart.pyw"
-$taskName = "Culture Subtitle Queue Server"
-$userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$launcherName = "culture-subtitle-control.pyw"
+$launcherPath = Join-Path $projectRoot $launcherName
+$startupFolder = [Environment]::GetFolderPath("Startup")
+$shortcutPath = Join-Path $startupFolder "Culture Subtitle Workbench.lnk"
 
 if (-not (Test-Path -LiteralPath $launcherPath)) {
     throw "Autostart launcher was not found: $launcherPath"
 }
 
-$pythonwCommand = Get-Command pythonw.exe -ErrorAction SilentlyContinue
-$pythonwPath = if ($pythonwCommand) { $pythonwCommand.Source } else { $null }
-if (-not $pythonwPath) {
-    throw "pythonw.exe was not found on PATH. Install the standard Windows build of Python."
+$python = Get-Command python.exe -ErrorAction Stop
+$pythonwPath = (& $python.Source -c "import sys; from pathlib import Path; print(Path(sys.executable).with_name('pythonw.exe'))").Trim()
+if (-not (Test-Path -LiteralPath $pythonwPath)) {
+    throw "Python windowless executable was not found."
 }
 
-$action = New-ScheduledTaskAction -Execute $pythonwPath -Argument "`"$launcherPath`"" -WorkingDirectory $projectRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
-$principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable `
-    -MultipleInstances IgnoreNew `
-    -RestartCount 3 `
-    -RestartInterval (New-TimeSpan -Minutes 1)
+$shell = New-Object -ComObject WScript.Shell
+$shortcut = $shell.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $pythonwPath
+$shortcut.Arguments = "`"$launcherPath`""
+$shortcut.WorkingDirectory = $projectRoot
+$shortcut.Description = "문화자막 서버를 창 없이 시작합니다."
+$shortcut.Save()
 
-Register-ScheduledTask `
-    -TaskName $taskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Principal $principal `
-    -Settings $settings `
-    -Description "Starts the local Culture Subtitle queue server without a console window at Windows logon." `
-    -Force | Out-Null
-
-Start-ScheduledTask -TaskName $taskName
-Write-Output "Autostart registered: $taskName"
+Start-Process -FilePath $pythonwPath -ArgumentList "`"$launcherPath`"" -WorkingDirectory $projectRoot -WindowStyle Hidden
+Write-Output "Autostart registered: $shortcutPath ($launcherName)"

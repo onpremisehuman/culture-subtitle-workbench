@@ -34,6 +34,8 @@ let activePlayer = null;
 let pendingDeleteJob = null;
 let pendingPlaylistJob = null;
 let serverConnected = false;
+let requestPending = false;
+document.querySelector("#request-server").textContent = location.host;
 
 const aiDialog = document.querySelector("#ai-settings-dialog");
 const aiSelect = document.querySelector("#ai-backend");
@@ -92,10 +94,11 @@ function showServerDialog(mode = "offline") {
   const online = mode === "online";
   serverDialogTitle.textContent = online ? "문화자막 서버가 정상 작동 중입니다." : "문화자막 서버에 연결되지 않습니다.";
   serverDialogMessage.textContent = online
-    ? "작업 대기열과 자막 파일은 이 PC의 서버에서 처리됩니다."
+    ? "작업 대기열과 자막 파일은 현재 접속한 서버 PC에서 처리됩니다. 휴대폰에서 의뢰해도 처리 위치는 같습니다."
     : "PC가 켜져 있고 Tailscale이 연결되어 있는지 확인하세요. PC에 로그인하면 서버는 창 없이 자동으로 시작됩니다.";
   serverAddress.textContent = location.origin;
   serverTools.hidden = !online;
+  document.querySelector("#server-start-tools").hidden = !["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
   serverDialogDetail.textContent = "";
   if (!serverDialog.open) serverDialog.showModal();
 }
@@ -163,14 +166,18 @@ document.querySelector("#pair-form").addEventListener("submit", event => {
 
 form.addEventListener("submit", async event => {
   event.preventDefault();
-  const button = form.querySelector(`#${currentSource}-source button[type=submit]`);
-  button.disabled = true;
-  message.textContent = currentSource === "local" ? "영상 파일을 작업실로 올리는 중…" : "작업함에 넣는 중…";
+  if (requestPending) return;
+  requestPending = true;
+  const source = currentSource;
+  const submittedUrl = videoUrl.value.trim();
+  const buttons = form.querySelectorAll('button[type="submit"]');
+  buttons.forEach(button => { button.disabled = true; });
+  message.textContent = source === "local" ? "영상 파일을 서버 PC에 올리는 중…" : "서버 PC의 작업함에 접수 중…";
   try {
     const level = form.querySelector("input[name=level]:checked").value;
     const language = form.querySelector("#source-language").value;
     let result;
-    if (currentSource === "local") {
+    if (source === "local") {
       const file = videoFile.files[0];
       if (!file) throw new Error("먼저 영상 파일을 선택하세요.");
       const query = new URLSearchParams({filename: file.name, level, language});
@@ -179,24 +186,30 @@ form.addEventListener("submit", async event => {
         body: file,
         headers: {"Content-Type": "application/octet-stream"}
       });
-      message.textContent = `‘${result.job.title}’ 업로드 완료. 문화자막 작업을 시작합니다.`;
+      message.textContent = `‘${result.job.title}’ 업로드 완료. 서버 PC에서 처리합니다. 이제 이 창을 닫아도 됩니다.`;
       videoFile.value = "";
       document.querySelector("#file-name").textContent = "MP4·MOV·WebM·MKV·AVI";
     } else {
       result = await CultureAPI.request("/api/jobs", {
         method: "POST",
-        body: JSON.stringify({url: videoUrl.value, level, language})
+        body: JSON.stringify({url: submittedUrl, level, language})
       });
-      message.textContent = `‘${result.job.title || result.job.video_id}’ 작업을 맡겼습니다.`;
-      videoUrl.value = "";
+      message.textContent = result.job.status === "completed"
+        ? `‘${result.job.title || result.job.video_id}’ 자막이 이미 완성돼 있습니다. 아래 목록에서 감상하세요.`
+        : `‘${result.job.title || result.job.video_id}’ 서버 PC 작업함에 접수됐습니다. 이 창을 닫아도 PC에서 계속 처리합니다.`;
+      if (videoUrl.value.trim() === submittedUrl) videoUrl.value = "";
     }
+    activeLibrary = result.job.hidden ? "hidden" : `playlist:${result.job.playlist || "기본 재생목록"}`;
     form.querySelector("input[value=culture]").checked = true;
     document.querySelectorAll(".level-option").forEach(label => label.classList.toggle("selected", label.querySelector("input").checked));
     await loadJobs();
   } catch (error) {
-    message.textContent = error.message;
+    message.textContent = error.message === "server-unreachable"
+      ? "서버 PC에 연결되지 않아 접수를 확인하지 못했습니다. PC와 Tailscale 연결 후 작업 목록을 확인하고 다시 시도하세요."
+      : error.message === "pairing-required" ? "서버 연결 인증이 필요합니다. 위의 연결 상태를 확인하세요." : error.message;
   } finally {
-    button.disabled = false;
+    requestPending = false;
+    buttons.forEach(button => { button.disabled = false; });
   }
 });
 
@@ -282,12 +295,13 @@ function renderJobs(jobs) {
           <h3 class="job-title">${escapeHtml(job.title || "영상 정보를 확인하는 중")}</h3>
           <div class="job-meta"><span>${local ? "내 컴퓨터" : "YouTube"}</span><span>${escapeHtml(language)}</span><span>${levelLabel(job.level)}</span><span>${statusLabel(job.status)}</span><span class="playlist-badge">${escapeHtml(job.playlist || "기본 재생목록")}</span></div>
           <div class="status-line"><div class="progress"><i style="width:${Number(job.progress)}%"></i></div><span class="status-text">${escapeHtml(job.stage)}</span></div>
+          ${done && job.playback?.duration > 0 ? `<div class="watch-progress"><progress aria-label="시청 진행률" max="${Number(job.playback.duration)}" value="${Number(job.playback.position)}"></progress><span>${job.playback.completed ? '다 봄' : `${CulturePlayback.time(job.playback.position)} / ${CulturePlayback.time(job.playback.duration)} 시청`}</span></div>` : ''}
           ${failed ? `<div class="error-box">${escapeHtml(job.error)}</div>` : ""}
           <p class="export-status" role="status"></p>
         </div>
         <div class="job-actions">
-          ${done && local ? `<button class="watch-button inline-watch" data-id="${escapeHtml(job.id)}">작업실에서 보기</button>` : ""}
-          ${done && !local ? `<a class="watch-button" href="/app/watch.html?v=${escapeHtml(job.video_id)}">문화자막으로 보기</a>` : ""}
+          ${done && local ? `<button class="watch-button inline-watch" data-id="${escapeHtml(job.id)}">${job.playback?.position >= 1 && !job.playback.completed ? '이어보기' : '작업실에서 보기'}</button>` : ""}
+          ${done && !local ? `<a class="watch-button" href="/app/watch.html?v=${escapeHtml(job.video_id)}">${job.playback?.position >= 1 && !job.playback.completed ? '이어보기' : '문화자막으로 보기'}</a>` : ""}
           ${done ? `<button class="export-button" data-export="srt">SRT</button><button class="export-button" data-export="mp4">MP4</button><button class="export-button" data-export="mp4_srt">MP4+SRT</button>` : ""}
           ${failed ? `<button class="quiet retry-button" data-id="${escapeHtml(job.id)}">다시 시도</button>` : ""}
           ${!local ? `<a class="youtube-button" href="${escapeHtml(job.youtube_url)}" target="_blank" rel="noreferrer">YouTube</a>` : ""}
@@ -305,7 +319,7 @@ function renderJobs(jobs) {
   document.querySelectorAll("[data-playlist-id]").forEach(button => button.addEventListener("click", () => openPlaylistDialog(button)));
   document.querySelectorAll("[data-hide-id]").forEach(button => button.addEventListener("click", () => toggleHidden(button)));
   document.querySelectorAll("[data-select-id]").forEach(input => input.addEventListener("click", event => {
-    event.preventDefault();
+    // Do not cancel native checkbox activation: cancellation reverts the checked UI.
     event.stopPropagation();
     const index = renderedJobIds.indexOf(input.dataset.selectId);
     toggleJobSelection(index, event.shiftKey);
@@ -454,13 +468,31 @@ function openPlaylistDialogForJobs(jobs) {
   };
   document.querySelector("#playlist-job-title").textContent = pendingPlaylistJob.title;
   const input = document.querySelector("#playlist-name");
-  input.value = pendingPlaylistJob.playlist;
-  document.querySelector("#playlist-names").innerHTML = playlistNames().map(name => `<option value="${escapeHtml(name)}"></option>`).join("");
+  const names = playlistNames();
+  input.innerHTML = '<option value="" disabled>재생목록을 선택하세요</option>' +
+    names.map((name, index) => `<option value="${index}" data-name="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('') +
+    '<option value="new">＋ 새 재생목록 만들기</option>';
+  const currentIndex = names.indexOf(pendingPlaylistJob.playlist);
+  input.value = currentIndex >= 0 ? String(currentIndex) : '';
+  document.querySelector('#playlist-new-name').value = '';
+  syncPlaylistNewName();
   document.querySelector("#playlist-dialog-message").textContent = "";
   document.querySelector("#playlist-confirm").disabled = false;
   playlistDialog.showModal();
-  input.select();
+  input.focus();
 }
+
+function syncPlaylistNewName() {
+  const creating = document.querySelector('#playlist-name').value === 'new';
+  document.querySelector('#playlist-new-fields').hidden = !creating;
+  const input = document.querySelector('#playlist-new-name');
+  input.required = creating;
+  input.disabled = !creating;
+}
+document.querySelector('#playlist-name').addEventListener('change', () => {
+  syncPlaylistNewName();
+  if (document.querySelector('#playlist-name').value === 'new') document.querySelector('#playlist-new-name').focus();
+});
 
 document.querySelector("#playlist-cancel").addEventListener("click", () => {
   pendingPlaylistJob = null;
@@ -474,7 +506,9 @@ playlistForm.addEventListener("submit", async event => {
   const dialogMessage = document.querySelector("#playlist-dialog-message");
   confirm.disabled = true;
   try {
-    const playlist = document.querySelector("#playlist-name").value.trim();
+    const picker = document.querySelector('#playlist-name');
+    const playlist = (picker.value === 'new' ? document.querySelector('#playlist-new-name').value : picker.selectedOptions[0]?.dataset.name || '').trim();
+    if (!playlist) throw new Error('재생목록을 선택하거나 새 이름을 입력하세요.');
     if (pendingPlaylistJob.ids.length === 1) {
       await CultureAPI.request(`/api/jobs/${pendingPlaylistJob.ids[0]}`, {
         method: "PATCH", body: JSON.stringify({playlist})
@@ -617,6 +651,7 @@ function cuesToVtt(cues) {
 
 function closeActivePlayer() {
   if (!activePlayer) return;
+  activePlayer.playback?.dispose();
   if (activePlayer.pipWindow && !activePlayer.pipWindow.closed) activePlayer.pipWindow.close();
   cancelAnimationFrame(activePlayer.frame);
   activePlayer.video.pause();
@@ -689,6 +724,15 @@ async function openInlinePlayer(jobId) {
     video.append(track);
     const state = {host, shell, video, track, trackUrl, frame: 0};
     activePlayer = state;
+    video.addEventListener('loadedmetadata', () => {
+      if (activePlayer !== state) return;
+      state.playback = CulturePlayback.attach({jobId, host: shell,
+        read: () => ({position: video.currentTime, duration: video.duration, playing: !video.paused, ended: video.ended}),
+        seek: value => { video.currentTime = value; }, pause: () => video.pause(), play: () => video.play()
+      });
+    }, {once: true});
+    video.addEventListener('pause', () => state.playback?.flush());
+    video.addEventListener('ended', () => state.playback?.flush());
     const draw = () => {
       if (activePlayer !== state) return;
       const active = enabled ? cues.filter(cue => video.currentTime >= cue.start && video.currentTime < cue.end) : [];
@@ -708,7 +752,7 @@ async function openInlinePlayer(jobId) {
     });
     host.querySelector('[data-player-action="close"]').addEventListener("click", closeActivePlayer);
     host.querySelector('[data-player-action="pip"]').addEventListener("click", event => openAlwaysOnTop(state, event.currentTarget));
-    video.play().catch(() => {});
+    // Let the viewer choose resume/start before playback; also works on mobile autoplay restrictions.
   } catch (error) {
     host.innerHTML = `<div class="error-box">${escapeHtml(error.message)}</div>`;
   }

@@ -52,7 +52,11 @@ const CultureAPI = (() => {
     let data;
     if ((response.headers.get("content-type") || "").includes("json")) data = await response.json();
     else data = await response.text();
-    if (!response.ok) throw new Error(data.error || `요청 실패 (${response.status})`);
+    if (!response.ok) {
+      const error = new Error(data.error || `요청 실패 (${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
     return data;
   }
 

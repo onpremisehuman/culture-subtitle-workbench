@@ -35,6 +35,7 @@ button:focus-visible { outline: 3px solid var(--herb); outline-offset: 2px; }
 .primary:disabled { cursor: default; opacity: .42; }
 #status { min-height: 19px; margin: 7px 0 0; color: var(--muted); font-size: 13px; font-weight: 700; }
 .quick-queue { margin-top: 3px; color: var(--harbor-dark); background: var(--soft); border: 1px solid var(--line); }
+.server-start-help { margin: 6px 0; font-size: 14px; line-height: 1.45; word-break: keep-all; overflow-wrap: anywhere; }
 footer { display: grid; grid-template-columns: 1fr; gap: 6px; padding: 7px 13px 10px; }
 footer button { color: var(--harbor-dark); background: var(--soft); border: 1px solid var(--line); }
 #open-local { color: var(--ink); background: var(--herb); border-color: rgba(16,32,51,.14); }

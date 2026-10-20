@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#3770bf">
   <title>문화자막 작업함</title>
   <link rel="manifest" href="/app/manifest.webmanifest">
-  <link rel="stylesheet" href="/app/styles.css">
+  <link rel="stylesheet" href="/app/styles.css?v=20261020-watch-ui">
 </head>
 <body>
   <header class="topbar">
@@ -25,19 +25,20 @@
     <section class="request-panel" aria-labelledby="request-title">
       <div>
         <p class="eyebrow">새 자막 의뢰</p>
-        <h1 id="request-title">영상 원본 선택</h1>
-        <p class="intro">YouTube 영상은 원래 화면에, 로컬 영상은 작업실 플레이어에 문화역주 자막을 얹습니다.</p>
+        <h1 id="request-title">데스크톱에 자막 의뢰</h1>
+        <p class="intro">YouTube에서 공유 → 링크 복사 후 아래에 붙여넣으세요. 전사·번역은 연결된 서버 PC에서 처리합니다.</p>
+        <p class="request-destination">처리 서버 <strong id="request-server"></strong></p>
       </div>
       <form id="request-form">
         <div class="source-tabs" role="tablist" aria-label="영상 원본">
           <button class="source-tab active" type="button" role="tab" aria-selected="true" data-source="youtube">YouTube</button>
-          <button class="source-tab" type="button" role="tab" aria-selected="false" data-source="local">내 컴퓨터</button>
+          <button class="source-tab" type="button" role="tab" aria-selected="false" data-source="local">이 기기의 영상</button>
         </div>
         <div class="source-pane" id="youtube-source">
           <label for="video-url">YouTube 주소</label>
           <div class="url-row">
             <input id="video-url" name="url" type="url" inputmode="url" autocomplete="url" placeholder="https://www.youtube.com/watch?v=…" required>
-            <button class="primary" type="submit">작업함에 넣기</button>
+            <button class="primary" type="submit">데스크톱에 의뢰</button>
           </div>
         </div>
         <div class="source-pane" id="local-source" hidden>
@@ -47,7 +48,7 @@
             <input id="video-file" type="file" accept="video/*,.mkv,.avi,.wmv">
             <button class="primary" type="submit">작업함에 올리기</button>
           </div>
-          <p class="upload-note">파일은 이 PC의 작업 폴더에만 저장됩니다. 업로드 창을 닫지 마세요.</p>
+          <p class="upload-note">파일은 연결된 서버 PC에 업로드됩니다. 업로드가 끝날 때까지 이 창을 열어두세요.</p>
         </div>
         <div class="language-row">
           <label for="source-language">원문 언어</label>
@@ -148,6 +149,10 @@
       <h2 id="server-dialog-title">문화자막 서버에 연결되지 않습니다.</h2>
       <p id="server-dialog-message">PC가 켜져 있고 Tailscale이 연결되어 있는지 확인하세요. PC에 로그인하면 서버는 창 없이 자동으로 시작됩니다.</p>
       <p class="server-address" id="server-address"></p>
+      <div id="server-start-tools" hidden>
+        <a class="primary" href="http://127.0.0.1:47831/start/culture-subtitle-queue" target="_blank" rel="noopener">이 PC 서버 켜기</a>
+        <p>웹앱 보관함을 통해 실행합니다. 열리지 않으면 바탕화면의 ‘문화자막 시작’을 누르세요.</p>
+      </div>
       <p class="dialog-message" id="server-dialog-message-detail" role="status"></p>
       <div class="server-tools" id="server-tools" hidden>
         <button class="quiet" id="copy-server-address" type="button">서버 주소 복사</button>
@@ -165,9 +170,12 @@
       <p class="eyebrow">재생목록 정리</p>
       <h2 id="playlist-dialog-title">어느 재생목록으로 옮길까요?</h2>
       <p class="delete-job-title" id="playlist-job-title"></p>
-      <label for="playlist-name">재생목록 이름</label>
-      <input id="playlist-name" list="playlist-names" maxlength="40" autocomplete="off" required>
-      <datalist id="playlist-names"></datalist>
+      <label for="playlist-name">이동할 재생목록</label>
+      <select id="playlist-name" required></select>
+      <div id="playlist-new-fields" hidden>
+        <label for="playlist-new-name">새 재생목록 이름</label>
+        <input id="playlist-new-name" maxlength="40" autocomplete="off" disabled>
+      </div>
       <p class="dialog-message" id="playlist-dialog-message" role="status"></p>
       <div class="dialog-actions">
         <button class="quiet" value="cancel" type="button" id="playlist-cancel">취소</button>
@@ -204,7 +212,8 @@
     </form>
   </dialog>
 
-  <script src="/app/common.js"></script>
-  <script src="/app/app.js"></script>
+  <script src="/app/common.js?v=20261019-resume"></script>
+  <script src="/app/playback.js?v=20261020-watch-ui"></script>
+  <script src="/app/app.js?v=20261019-library-fix"></script>
 </body>
 </html>

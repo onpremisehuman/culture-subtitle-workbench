@@ -1,4 +1,5 @@
 let currentVideoId = "";
+let subtitleLoadRevision = 0;
 let cues = [];
 let enabled = true;
 let overlay;
@@ -101,12 +102,17 @@ function parseSrt(text) {
 }
 
 async function loadForVideo(videoId) {
+  const revision = ++subtitleLoadRevision;
   cues = [];
+  lastCueKey = "";
+  setText(dialogue, "");
+  setText(note, "");
   if (!ensureOverlay()) return;
   badge.textContent = "확인 중";
   badge.classList.remove("ready", "off");
   try {
     const {job} = await sendApi(`/api/jobs/by-video/${videoId}`);
+    if (revision !== subtitleLoadRevision) return;
     if (!job) {
       badge.textContent = "자막 없음";
       return;
@@ -116,10 +122,12 @@ async function loadForVideo(videoId) {
       return;
     }
     const srt = await sendApi(`/api/jobs/${job.id}/subtitle.srt`);
+    if (revision !== subtitleLoadRevision) return;
     cues = parseSrt(srt);
     badge.textContent = "문화자막";
     badge.classList.add("ready");
   } catch (_) {
+    if (revision !== subtitleLoadRevision) return;
     badge.textContent = "서버 꺼짐";
   }
 }
@@ -171,6 +179,7 @@ chrome.storage.local.get({subtitleScale: 1, subtitleFont: "gothic"}).then(saved 
   applyUserFont(saved.subtitleFont);
 });
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.cultureServerTarget) loadForVideo(extractVideoId());
   if (area === "local" && changes.subtitleScale) applyUserScale(changes.subtitleScale.newValue);
   if (area === "local" && changes.subtitleFont) applyUserFont(changes.subtitleFont.newValue);
 });

@@ -6,6 +6,8 @@ YouTube 또는 내 컴퓨터의 영상을 큐에 넣으면 로컬 Whisper가 타
 
 > This is a local-first Korean cultural-subtitle workbench and Codex skill. The interface is currently Korean; transcription supports multiple source languages.
 
+공개판은 **각자의 Windows PC에서 실행하는 단일 사용자 버전**입니다. 개인 운영본에만 있는 특정 GPU PC/Tailscale 주소·설정은 포함하지 않습니다. 웹 작업함과 확장은 기본적으로 `127.0.0.1`에만 연결합니다.
+
 ## 주요 기능
 
 - YouTube 및 로컬 영상의 다국어 음성 전사
@@ -17,6 +19,9 @@ YouTube 또는 내 컴퓨터의 영상을 큐에 넣으면 로컬 Whisper가 타
 - SRT, 자막을 입힌 MP4, MP4+SRT 내보내기
 - 자막 크기와 폰트 선택, 반응형 두 줄 배치, 로컬 영상 항상 위에 보기
 - 콘솔 창 없는 Windows 로그인 자동실행
+- YouTube 영상 카드의 `문화자막 만들기` 메뉴와 의뢰 시 로컬 서버 자동 시작(로그인 자동실행 설치 시)
+- 전체 문맥 파악 → 구간별 번역 → 전체 검수, 말투·용어 통일과 원본 타임코드 보존
+- 같은 PC에서 시청 위치 이어보기, 전체화면 자막·역주 배경 조절
 
 ## 필요한 것
 
@@ -43,6 +48,8 @@ FFmpeg까지 winget으로 설치하고 로그인할 때 서버가 자동으로 �
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 -InstallFfmpeg -RegisterAutostart
 ```
+
+`-RegisterAutostart`는 이 PC의 로컬 실행 도우미를 시작프로그램에 등록합니다. 서버가 꺼져 있어도 확장에서 `문화자막 만들기`를 누르면 도우미가 서버를 켜고 의뢰를 등록합니다. 도우미는 `127.0.0.1:8875`에서만 시작 요청을 받으며 다른 명령이나 원격 PC 제어는 지원하지 않습니다.
 
 이미 다른 위치에 clone했다면 그 폴더를 `.codex/skills/culture-subtitle-workbench`에 심볼릭 링크해도 됩니다. 설치 후 새 Codex 작업을 열면 `$culture-subtitle-workbench`로 호출할 수 있습니다.
 
@@ -80,11 +87,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start.ps1
 
 이 도구는 본인이 소유했거나 사용 허가를 받은 영상, 퍼블릭도메인 등 적법하게 처리할 수 있는 미디어를 위한 것입니다. 접근 통제나 DRM을 우회하지 마십시오. YouTube MP4 및 MP4+SRT 내보내기는 필요한 권리가 있는 경우에만 사용하십시오. 저장소 공개와 오픈소스 라이선스가 제3자 콘텐츠에 대한 권리를 부여하지는 않습니다.
 
+YouTube 영상은 감상할 때 공식 임베드 플레이어에서 재생되지만, 자막 제작을 위해서는 음원을 임시로 추출합니다. 임시 삭제나 비영리 이용만으로 플랫폼 약관·저작권 문제를 해결한 것으로 보지 마세요. 번역 자막의 제작·공유와 음원 처리 권한을 별도로 확인해야 합니다.
+
 ## 점검
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\doctor.ps1
 python -m unittest discover -s app/tests -v
+node --test app/tests/*.cjs
 ```
 
 ## 설정

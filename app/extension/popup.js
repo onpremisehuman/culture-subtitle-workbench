@@ -1,6 +1,8 @@
-const API_BASE = "http://127.0.0.1:8876";
+let API_BASE = "http://127.0.0.1:8876";
+const serverTarget = document.querySelector("#server-target");
 let activeTab;
 let videoInfo;
+let playlistRevision = 0;
 const queueButton = document.querySelector("#queue");
 const statusEl = document.querySelector("#status");
 const playlistItems = document.querySelector("#playlist-items");
@@ -80,7 +82,8 @@ async function init() {
 queueButton.addEventListener("click", async () => {
   if (!videoInfo?.videoId) return;
   queueButton.disabled = true;
-  statusEl.textContent = "작업함에 넣는 중…";
+  serverTarget.disabled = true;
+  statusEl.textContent = "서버 확인 중… 꺼져 있으면 자동으로 켠 뒤 등록합니다.";
   try {
     const level = document.querySelector("input[name=level]:checked").value;
     const language = document.querySelector("#source-language").value;
@@ -95,11 +98,16 @@ queueButton.addEventListener("click", async () => {
   } catch (error) {
     statusEl.textContent = error.message;
     queueButton.disabled = false;
+  } finally {
+    serverTarget.disabled = false;
   }
 });
 
-document.querySelector("#open-queue").addEventListener("click", () => chrome.runtime.sendMessage({type: "openQueue"}));
-document.querySelector("#open-local").addEventListener("click", () => chrome.runtime.sendMessage({type: "openLocalQueue"}));
+async function openWorkbench(type) {
+  try { await send({type}); } catch (error) { statusEl.textContent = error.message; }
+}
+document.querySelector("#open-queue").addEventListener("click", () => openWorkbench("openQueue"));
+document.querySelector("#open-local").addEventListener("click", () => openWorkbench("openLocalQueue"));
 
 function escapeHtml(value) {
   return String(value || "").replace(/[&<>'"]/g, char => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;"}[char]));
@@ -133,8 +141,11 @@ async function requestExport(jobId, mode, button) {
 }
 
 async function loadPlaylist() {
+  const revision = ++playlistRevision;
+  const apiBase = API_BASE;
   try {
     const {jobs} = await send({type: "api", path: "/api/jobs"});
+    if (revision !== playlistRevision || apiBase !== API_BASE) return;
     const completedAll = jobs.filter(job => job.status === "completed" && !job.hidden);
     const names = [...new Set(completedAll.map(job => job.playlist || "기본 재생목록"))].sort((a, b) => a.localeCompare(b, "ko"));
     const previous = playlistFilter.value;
@@ -146,6 +157,7 @@ async function loadPlaylist() {
       return [job.id, exports || {}];
     }));
     const exportMap = new Map(exportsById);
+    if (revision !== playlistRevision || apiBase !== API_BASE) return;
     playlistItems.innerHTML = completed.length ? completed.map(job => {
       const states = exportMap.get(job.id) || {};
       const mp4Ready = states.mp4?.status === "ready";
@@ -178,12 +190,32 @@ async function loadPlaylist() {
       }
     }));
   } catch (error) {
+    if (revision !== playlistRevision || apiBase !== API_BASE) return;
     playlistItems.innerHTML = `<p class="empty">${escapeHtml(error.message)}</p>`;
   }
 }
 
 document.querySelector("#refresh-playlist").addEventListener("click", loadPlaylist);
 playlistFilter.addEventListener("change", loadPlaylist);
-init();
-loadPlaylist();
-setInterval(loadPlaylist, 5000);
+serverTarget.addEventListener("change", async () => {
+  serverTarget.disabled = true;
+  try {
+    const target = await send({type: "setServer", target: serverTarget.value});
+    API_BASE = target.base;
+    statusEl.textContent = `${target.label}에 등록합니다. 서버는 필요할 때 자동으로 켭니다.`;
+    queueButton.textContent = "문화자막 의뢰";
+    queueButton.disabled = !videoInfo?.videoId;
+    await loadPlaylist();
+    if (activeTab) await sendToYouTube({type: "reloadSubtitle"});
+  } catch (error) { statusEl.textContent = error.message; }
+  finally { serverTarget.disabled = false; }
+});
+async function startPopup() {
+  const target = await send({type: "getServer"});
+  API_BASE = target.base;
+  serverTarget.value = target.key;
+  await init();
+  await loadPlaylist();
+  setInterval(loadPlaylist, 5000);
+}
+startPopup().catch(error => { statusEl.textContent = error.message; });

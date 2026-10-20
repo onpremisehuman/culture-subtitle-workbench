@@ -7,6 +7,9 @@
 <body>
   <header><span><img src="icon-32.png" alt=""></span><strong>문화자막</strong></header>
   <main>
+    <label class="language-control" for="server-target"><span>작업 PC</span>
+      <select id="server-target"><option value="local">이 PC</option></select>
+    </label>
     <p class="label">현재 영상</p>
     <h1 id="title">YouTube 영상을 열어주세요.</h1>
     <section class="size-control" aria-labelledby="size-title">
@@ -49,6 +52,7 @@
     <button id="queue" class="primary" type="button" disabled>문화자막 의뢰</button>
     <p id="status" role="status"></p>
     <button id="open-queue" class="quick-queue" type="button">내 작업함 열기</button>
+    <p class="server-start-help">실행 도우미를 설치하면 서버가 꺼져 있어도 의뢰할 때 자동으로 켭니다.</p>
     <section class="playlist" aria-labelledby="playlist-title">
       <div class="playlist-heading">
         <p class="label">내 재생목록</p>
