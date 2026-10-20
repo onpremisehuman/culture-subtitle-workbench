@@ -106,6 +106,7 @@ node --test app/tests/*.cjs
 - `CULTURE_TRANSLATION_CHUNK`: 한 번에 번역할 발화 수(기본 200)
 - `CULTURE_TRANSLATION_PARALLEL`: 동시에 번역할 구간 수(기본 2)
 - `CULTURE_TRUST_TAILSCALE=1`: `--lan` 모드에서 Tailscale 노드(100.64.0.0/10)에 페어링 토큰 자동 발급. 기본값은 이 PC에서만 자동 발급
+- `CULTURE_ALLOWED_HOSTS=pc.example.ts.net`: IP·`localhost`가 아닌 이름(예: Tailscale MagicDNS)으로 접속할 때 허용할 호스트 이름(쉼표 구분). 목록에 없는 이름이나 다른 웹사이트 출처에서 온 요청은 거부
 - 기본 서버 주소: `127.0.0.1:8876`
 
 ## 라이선스
